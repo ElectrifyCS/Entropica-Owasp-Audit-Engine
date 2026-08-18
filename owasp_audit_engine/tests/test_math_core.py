@@ -48,6 +48,43 @@ class TestSequentialScore:
         score = MathCore.sequential_score([17, 42, 3, 99, 8])
         assert score < 0.5
 
+    def test_order_independent(self):
+        # Same underlying ID space (1001-1010, an obvious auto-increment
+        # range), just encountered in a different order — e.g. a paginated
+        # listing that doesn't return rows sorted by ID. The score must not
+        # depend on collection order, only on the ID values themselves.
+        in_order = list(range(1001, 1011))
+        shuffled = [1006, 1002, 1009, 1001, 1010, 1005, 1008, 1003, 1007, 1004]
+        assert MathCore.sequential_score(in_order) == 1.0
+        assert MathCore.sequential_score(shuffled) == 1.0
+
+
+class TestEstimatedKeyspaceBits:
+    def test_non_numeric_returns_none(self):
+        assert MathCore.estimated_keyspace_bits(["abc", "def", "ghi"]) is None
+
+    def test_too_few_samples_returns_none(self):
+        assert MathCore.estimated_keyspace_bits([100, 200]) is None
+
+    def test_small_keyspace_flagged_low(self):
+        # 5-digit IDs: true keyspace is at most ~10^5, should read well
+        # under the default 32-bit "brute-forceable" threshold.
+        ids = [52445, 29772, 61750, 95319, 16328, 19494, 80239]
+        bits = MathCore.estimated_keyspace_bits(ids)
+        assert bits is not None
+        assert bits < 20.0
+
+    def test_large_keyspace_reads_high(self):
+        # 10-digit IDs: ~9.9 x 10^9 possible values, should read well
+        # above the default 32-bit threshold even from a small sample.
+        ids = [7294919105, 3522798642, 7493598146, 4405809747, 5699224467]
+        bits = MathCore.estimated_keyspace_bits(ids)
+        assert bits is not None
+        assert bits > 30.0
+
+    def test_identical_ids_returns_zero(self):
+        assert MathCore.estimated_keyspace_bits([5, 5, 5]) == 0.0
+
 
 class TestWelford:
     def test_constant_stream(self):
@@ -92,3 +129,25 @@ class TestAcceleration:
         for t, r in [(0, 1), (1, 3), (2, 8), (3, 20)]:
             v, a = acc.update(t, r)
         assert acc.acceleration > 0
+
+    def test_single_spike_not_sustained(self):
+        # One big jump, then acceleration settles back down. A single
+        # spike shouldn't read as "sustained" brute-force acceleration.
+        acc = AccelerationTracker(window=6)
+        for t, r in [(0, 5), (1, 6), (2, 40), (3, 42), (4, 44), (5, 46)]:
+            acc.update(t, r)
+        assert not acc.is_brute_force(accel_threshold=15, sustained=3)
+
+    def test_sustained_ramp_flagged(self):
+        # Acceleration stays elevated across several consecutive windows —
+        # the pattern a scripted ramp-up actually produces.
+        acc = AccelerationTracker(window=8)
+        for t, r in [(0, 5), (1, 8), (2, 20), (3, 45), (4, 90), (5, 170), (6, 310)]:
+            acc.update(t, r)
+        assert acc.is_brute_force(accel_threshold=15, sustained=3)
+
+    def test_insufficient_history_not_flagged(self):
+        acc = AccelerationTracker(window=5)
+        acc.update(0, 5)
+        acc.update(1, 50)
+        assert not acc.is_brute_force(accel_threshold=15, sustained=3)

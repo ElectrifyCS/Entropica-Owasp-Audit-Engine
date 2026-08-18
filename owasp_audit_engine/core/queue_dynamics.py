@@ -92,6 +92,9 @@ class AccelerationTracker:
         self.rates: Deque[Tuple[float, float]] = deque(maxlen=window)  # (t, rate)
         self._last_velocity: float = 0.0
         self._last_accel: float = 0.0
+        # Keep more accel history than `window` so is_brute_force can look
+        # back further than the rate window used to compute each point.
+        self._accel_history: Deque[float] = deque(maxlen=max(window * 2, 10))
 
     def update(self, t: float, rate: float) -> Tuple[float, float]:
         """
@@ -121,6 +124,7 @@ class AccelerationTracker:
 
         self._last_velocity = velocity
         self._last_accel = accel
+        self._accel_history.append(accel)
         return velocity, accel
 
     @property
@@ -133,10 +137,16 @@ class AccelerationTracker:
 
     def is_brute_force(self, accel_threshold: float = 20.0, sustained: int = 3) -> bool:
         """
-        Heuristic: sustained high positive acceleration suggests automation.
-        (In a real system you would keep a short history of accel signs.)
+        True when the last `sustained` consecutive acceleration readings
+        have ALL exceeded accel_threshold. A single spike is easily organic
+        (a cache miss, a slow dependency); acceleration staying elevated
+        across several consecutive windows in a row is much more consistent
+        with scripted traffic ramping up than with normal usage.
         """
-        return self._last_accel > accel_threshold
+        if sustained < 1 or len(self._accel_history) < sustained:
+            return False
+        recent = list(self._accel_history)[-sustained:]
+        return all(a > accel_threshold for a in recent)
 
     def reset(self) -> None:
         self.rates.clear()
