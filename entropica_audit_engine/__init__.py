@@ -1,5 +1,5 @@
 """
-OWASP Audit Engine
+ENTROPICA Audit Engine
 Mathematical foundations for API security testing.
 """
 

@@ -1,15 +1,15 @@
 """
 Quick demo — run from the project root:
 
-    python -m owasp_audit_engine.demo
+    python -m entropica_audit_engine.demo
 """
 
 from __future__ import annotations
 
 import asyncio
-from owasp_audit_engine.rules.registry import build_default_registry
-from owasp_audit_engine.core.welford import WelfordTracker
-from owasp_audit_engine.core.queue_dynamics import QueueDynamicsTracker, AccelerationTracker
+from entropica_audit_engine.rules.registry import build_default_registry
+from entropica_audit_engine.core.welford import WelfordTracker
+from entropica_audit_engine.core.queue_dynamics import QueueDynamicsTracker, AccelerationTracker
 
 
 async def demo_bola():

@@ -1,5 +1,5 @@
 """
-Pure mathematical primitives for the OWASP Audit Engine.
+Pure mathematical primitives for the ENTROPICA Audit Engine.
 No I/O, no side effects — fully unit-testable.
 """
 

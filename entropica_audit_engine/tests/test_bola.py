@@ -1,5 +1,5 @@
 """
-Unit tests for PredictableResourceIDRule (OWASP API1:2023 – BOLA).
+Unit tests for PredictableResourceIDRule (ENTROPICA API1:2023 – BOLA).
 
 These specifically target the numeric-vs-entropy branching added to fix
 two issues found during review:
@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from owasp_audit_engine.rules.bola import PredictableResourceIDRule
+from entropica_audit_engine.rules.bola import PredictableResourceIDRule
 
 
 def run(coro):

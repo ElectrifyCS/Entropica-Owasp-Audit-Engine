@@ -1,5 +1,5 @@
 """
-Differential models for rate-limiting / unrestricted resource consumption (OWASP API4).
+Differential models for rate-limiting / unrestricted resource consumption (ENTROPICA API4).
 
 Continuous form:
     dQ/dt = f_in(t) - μ

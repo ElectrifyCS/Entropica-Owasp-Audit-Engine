@@ -1,4 +1,4 @@
-# OWASP Audit Engine
+# ENTROPICA Audit Engine
 
 **A personal deep-dive into the mathematical foundations of API security.**
 
@@ -10,7 +10,7 @@ I built this the hard way — reading papers, implementing the formulas from scr
 
 ## The Math & The Reasoning
 
-### 1. Shannon Entropy — Predictable Resource IDs (OWASP API1:2023)
+### 1. Shannon Entropy — Predictable Resource IDs (ENTROPICA API1:2023)
 
 **The problem**  
 Broken Object Level Authorization (BOLA) often starts with IDs that an attacker can guess. Sequential integers (`1001`, `1002`, `1003`…) or short repeated tokens give away the structure of the backend. Most scanners only look for the presence of an ID parameter; they rarely ask *how random* that ID actually is.
@@ -57,7 +57,7 @@ I first implemented the naïve sum-of-squares approach and watched catastrophic 
 
 ---
 
-### 3. Differential Queue Dynamics — Unrestricted Resource Consumption (OWASP API4)
+### 3. Differential Queue Dynamics — Unrestricted Resource Consumption (ENTROPICA API4)
 
 **The problem**  
 Rate-limiting and resource exhaustion attacks are usually detected with simple sliding-window counters. Those counters lose the *dynamics* of the attack — how fast the queue is growing and whether the arrival rate itself is accelerating.
@@ -93,7 +93,7 @@ Treating the endpoint as a simple queue makes the overload condition intuitive: 
 ## Project layout
 
 ```
-owasp_audit_engine/
+ENTROPICA_audit_engine/
 ├── core/                 # Pure math — zero I/O, fully unit-testable
 │   ├── math_core.py      # Shannon entropy + sequential score
 │   ├── welford.py        # Online mean / variance / z-score
@@ -114,10 +114,10 @@ owasp_audit_engine/
 
 ```bash
 # Run the interactive demo
-python -m owasp_audit_engine.demo
+python -m ENTROPICA_audit_engine.demo
 
 # Run the unit tests
-python -m pytest owasp_audit_engine/tests/ -v
+python -m pytest ENTROPICA_audit_engine/tests/ -v
 ```
 
 ---
@@ -159,7 +159,7 @@ You are free to use, copy, modify, merge, publish, distribute, and sell copies o
 
 ## Looking ahead
 
-This repository will keep evolving. I plan to add real HTTP workers, more OWASP API rules, and eventually a small FastAPI control plane. Every improvement will stay grounded in the same mathematical approach.
+This repository will keep evolving. I plan to add real HTTP workers, more ENTROPICA API rules, and eventually a small FastAPI control plane. Every improvement will stay grounded in the same mathematical approach.
 
 If you find this useful, or if you spot places where the math or the engineering can be stronger, I’d love to hear about it. This project has already taught me more than I expected — and there’s still a lot left to learn.
 

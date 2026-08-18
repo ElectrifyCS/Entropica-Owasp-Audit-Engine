@@ -1,5 +1,5 @@
 """
-OWASP API1:2023 – Broken Object Level Authorization
+ENTROPICA API1:2023 – Broken Object Level Authorization
 Detects predictable / sequential resource IDs via Shannon entropy
 and sequential-score heuristics.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Sequence
 
-from owasp_audit_engine.core.math_core import MathCore
+from entropica_audit_engine.core.math_core import MathCore
 from .base import BaseAuditRule, Finding, Severity
 
 

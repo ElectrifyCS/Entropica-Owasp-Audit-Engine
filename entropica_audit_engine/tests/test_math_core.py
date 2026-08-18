@@ -1,14 +1,14 @@
 """
 Unit tests for the pure math core.
-Run with:  python -m pytest owasp_audit_engine/tests/ -v
+Run with:  python -m pytest entropica_audit_engine/tests/ -v
 """
 
 import math
 import pytest
 
-from owasp_audit_engine.core.math_core import MathCore
-from owasp_audit_engine.core.welford import WelfordTracker
-from owasp_audit_engine.core.queue_dynamics import QueueDynamicsTracker, AccelerationTracker
+from entropica_audit_engine.core.math_core import MathCore
+from entropica_audit_engine.core.welford import WelfordTracker
+from entropica_audit_engine.core.queue_dynamics import QueueDynamicsTracker, AccelerationTracker
 
 
 class TestShannonEntropy:
