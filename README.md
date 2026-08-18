@@ -1,4 +1,4 @@
-# ENTROPICA Audit Engine
+# Entropica Audit Engine
 
 **A personal deep-dive into the mathematical foundations of API security.**
 
