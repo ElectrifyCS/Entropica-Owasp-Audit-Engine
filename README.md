@@ -161,23 +161,68 @@ The BOLA rule (section 1) applies the entropy/sequential/keyspace triad to *reso
 
 ---
 
+### 8. Queue Dynamics as a Rule — Unrestricted Resource Consumption (ENTROPICA API4:2023)
+
+The queue and acceleration model (section 3) existed as pure, tested functions before it existed as something that could produce a `Finding`. `UnrestrictedResourceConsumptionRule` is the missing plumbing: it feeds a time series of `(timestamp, arrival_rate)` observations through `QueueDynamicsTracker` and `AccelerationTracker` and raises a finding when either the modelled queue length crosses a threshold, or acceleration stays elevated for several consecutive windows in a row (see section 3 for why a single spike isn't enough evidence on its own). No new math — just closing the gap between "the model works" and "the model produces a finding."
+
+---
+
+### 9. Mass Assignment (ENTROPICA API6:2023) — A Structural Signal, Not a Statistical One
+
+**The problem**  
+Every rule so far measures the *randomness* of a value. Mass assignment is a different shape of vulnerability entirely: it's not about how predictable a field's value is, it's about whether a field should be settable by a client at all — e.g. a write endpoint silently accepting a `role` field that never even appears in any read response for that resource.
+
+**The mathematics (set theory, not information theory)**  
+Let $R$ be the set of field names observed in read responses for a resource, and $W$ be the set of field names accepted (not rejected) by write requests for the same resource. Two signals fall out of comparing them:
+
+$$
+\text{extra} = W \setminus R \qquad \text{(fields writable but never readable — the highest-risk set)}
+$$
+
+$$
+J(R, W) = \frac{|R \cap W|}{|R \cup W|} \qquad \text{(Jaccard index — standard set-similarity measure, } 1.0 = \text{identical, } 0.0 = \text{disjoint)}
+$$
+
+A finding fires when `extra` is non-empty past a small threshold, or when $J(R,W)$ drops below a cutoff — i.e. the writable and readable surfaces have structurally drifted apart, independent of what any individual field is *named*.
+
+**Why set theory here, and not string matching**  
+The existing `ExcessiveDataExposureRule` docstring already commits to "pure mathematical signals only — no string pattern matching for 'password', 'ssn', etc." Mass assignment is the case that tests whether that principle actually holds up: you can flag the *shape* of a mass-assignment surface (a write-only field with no read counterpart) without ever needing to know or care what the field is called. Set difference and Jaccard similarity turn out to be exactly the right tool — a different branch of math (combinatorics/set theory rather than information theory) applied to a genuinely different question than every rule before it.
+
+---
+
+## Async probing (`worker/`) and the control plane (`api/`)
+
+Two more pieces exist now beyond the rule math itself:
+
+- **`worker/prober.py`** — an async HTTP prober (`httpx` + `asyncio`) that collects real evidence (resource IDs, response field samples, response latencies) and hands it to the rules above in the shapes they already expect. The one design choice worth calling out: the prober's own request concurrency is governed by the *same* `QueueDynamicsTracker` used to detect overload in section 8 — instead of a fixed requests-per-second ceiling, it tracks its own modelled queue against the target and backs off exactly when that queue would start growing. The tool uses its own detection math to avoid becoming the thing it's built to find.
+- **`api/app.py`** — a small FastAPI control plane exposing the rule registry (`GET /rules`), per-rule evaluation endpoints (`POST /findings/{rule}`) for handing in evidence directly, a `POST /scans` endpoint that runs the prober against a list of URLs and auto-evaluates whatever evidence comes back, and `GET /findings` to list everything collected. Findings persist in an in-memory store for the process lifetime — SQLite is the obvious next step and the store module is already isolated so that swap won't touch the routes.
+
+---
+
 ## Project layout
 
 
 ```
-ENTROPICA_audit_engine/
-├── core/                 # Pure math — zero I/O, fully unit-testable
-│   ├── math_core.py      # Shannon entropy + sequential score
-│   ├── welford.py        # Online mean / variance / z-score
-│   └── queue_dynamics.py # Queue model + acceleration tracker
-├── rules/                # Strategy-pattern audit rules
-│   ├── base.py           # Finding schema + Severity enum
-│   ├── bola.py           # Predictable Resource ID rule (API1)
-│   └── registry.py       # Simple plugin registry
-├── tests/                # Unit tests for the mathematical core
-├── demo.py               # Runnable end-to-end showcase
-├── api/                  # FastAPI control plane (next)
-└── worker/               # Async HTTP probes + Celery (next)
+entropica_audit_engine/
+├── core/                      # Pure math — zero I/O, fully unit-testable
+│   ├── math_core.py           # Shannon/Miller–Madow entropy, sequential score, keyspace + CI
+│   ├── welford.py             # Online mean/variance/z-score + EWMA sequential anomaly test
+│   └── queue_dynamics.py      # Queue model + acceleration tracker
+├── rules/                     # Strategy-pattern audit rules
+│   ├── base.py                 # Finding schema + Severity enum
+│   ├── bola.py                 # Predictable Resource ID rule (API1)
+│   ├── excessive_data.py       # Excessive Data Exposure rule (API3)
+│   ├── resource_consumption.py # Unrestricted Resource Consumption rule (API4)
+│   ├── mass_assignment.py      # Mass Assignment rule (API6)
+│   └── registry.py             # Simple plugin registry
+├── worker/                    # Async HTTP probing (self-governed via queue model)
+│   └── prober.py
+├── api/                        # FastAPI control plane
+│   ├── app.py                  # Routes
+│   ├── models.py                # Pydantic request/response schemas
+│   └── store.py                 # In-memory findings store
+├── tests/                      # Unit tests for every module above
+└── demo.py                     # Runnable end-to-end showcase
 ```
 
 ---
@@ -186,10 +231,13 @@ ENTROPICA_audit_engine/
 
 ```bash
 # Run the interactive demo
-python -m ENTROPICA_audit_engine.demo
+python -m entropica_audit_engine.demo
 
 # Run the unit tests
-python -m pytest ENTROPICA_audit_engine/tests/ -v
+python -m pytest entropica_audit_engine/tests/ -v
+
+# Run the control plane locally
+uvicorn entropica_audit_engine.api.app:app --reload
 ```
 
 ---
@@ -199,15 +247,21 @@ python -m pytest ENTROPICA_audit_engine/tests/ -v
 | Component                              | Status    |
 |----------------------------------------|-----------|
 | Math core (Entropy + Sequential score) | Done      |
-| Math core (Welford)                    | Done      |
+| Math core (Miller–Madow + keyspace CI) | Done      |
+| Math core (Welford + EWMA)             | Done      |
 | Math core (Queue + Acceleration)       | Done      |
 | BOLA rule (API1)                       | Done      |
+| Excessive Data Exposure rule (API3)    | Done      |
+| Unrestricted Resource Consumption (API4) | Done    |
+| Mass Assignment rule (API6)            | Done      |
 | Finding schema + Rule registry         | Done      |
-| Async HTTP probing workers             | Next      |
-| FastAPI control plane                  | Planned   |
-| Additional rules (Mass Assignment …)   | Planned   |
+| Async HTTP probing worker              | Done      |
+| FastAPI control plane                  | Done      |
+| Persistent storage (SQLite)            | Planned   |
+| Distributed workers (Celery)           | Planned   |
+| Auth on the control plane              | Planned   |
 
-The mathematical foundations are solid and covered by tests. The next phase turns the pure functions into live probes and a usable control plane.
+The mathematical foundations, the active probing layer, and a usable control plane are all in place now. The next phase is persistence and making the probing layer safe to point at more than a single process's worth of targets.
 
 ---
 
@@ -231,7 +285,7 @@ You are free to use, copy, modify, merge, publish, distribute, and sell copies o
 
 ## Looking ahead
 
-This repository will keep evolving. I plan to add real HTTP workers, more ENTROPICA API rules, and eventually a small FastAPI control plane. Every improvement will stay grounded in the same mathematical approach.
+This repository will keep evolving. Persistent storage (SQLite), distributed workers (Celery), and auth on the control plane are next. Every improvement will stay grounded in the same mathematical approach — and, per section 5's confidence-interval bug, in checking that approach against reality rather than trusting that it sounds rigorous.
 
 If you find this useful, or if you spot places where the math or the engineering can be stronger, I’d love to hear about it. This project has already taught me more than I expected — and there’s still a lot left to learn.
 

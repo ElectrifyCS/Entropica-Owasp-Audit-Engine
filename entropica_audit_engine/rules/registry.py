@@ -40,8 +40,12 @@ def build_default_registry() -> RuleRegistry:
     """Factory that loads the built-in rules."""
     from .bola import PredictableResourceIDRule
     from .excessive_data import ExcessiveDataExposureRule
+    from .resource_consumption import UnrestrictedResourceConsumptionRule
+    from .mass_assignment import MassAssignmentRule
 
     registry = RuleRegistry()
     registry.register(PredictableResourceIDRule())
     registry.register(ExcessiveDataExposureRule())
+    registry.register(UnrestrictedResourceConsumptionRule())
+    registry.register(MassAssignmentRule())
     return registry

@@ -167,12 +167,68 @@ def demo_math_extras():
         print(f"    95 % CI            : [{lo:.2f}, {hi:.2f}] bits")
 
 
+async def demo_resource_consumption():
+    print("\n" + "=" * 60)
+    print("6. Unrestricted Resource Consumption rule (API4:2023)")
+    print("=" * 60)
+
+    registry = build_default_registry()
+    rule = registry.get("API4:2023")
+
+    async def run(label: str, rate_samples):
+        finding = await rule.execute(
+            target_url="https://api.example.com/login", rate_samples=rate_samples
+        )
+        if finding:
+            print(f"🚨 {label}: finding raised — {finding.metrics['triggered_by']}")
+        else:
+            print(f"✅ {label}: no finding")
+
+    stable = [(float(t), 5.0) for t in range(10)]
+    await run("Stable low-rate traffic", stable)
+
+    overloaded = [(float(t), 100.0) for t in range(10)]
+    await run("Sustained high arrival rate", overloaded)
+
+    scripted_ramp = [(float(t), 5.0 + 15.0 * t * t) for t in range(10)]
+    await run("Quadratic scripted ramp", scripted_ramp)
+
+
+async def demo_mass_assignment():
+    print("\n" + "=" * 60)
+    print("7. Mass Assignment rule (API6:2023)")
+    print("=" * 60)
+
+    registry = build_default_registry()
+    rule = registry.get("API6:2023")
+
+    async def run(label: str, read_fields, write_fields):
+        finding = await rule.execute(
+            target_url="https://api.example.com/users",
+            read_fields=read_fields,
+            write_fields=write_fields,
+        )
+        if finding:
+            print(f"🚨 {label}: write-only fields {finding.evidence['write_only_fields']}")
+        else:
+            print(f"✅ {label}: no finding")
+
+    await run("Matched read/write schema", ["id", "name", "email"], ["id", "name", "email"])
+    await run(
+        "Write-only 'role' field never exposed on read",
+        ["id", "name", "email"],
+        ["id", "name", "email", "role"],
+    )
+
+
 async def main():
     await demo_bola()
     await demo_excessive_data()
     demo_welford_and_ewma()
     demo_queue()
     demo_math_extras()
+    await demo_resource_consumption()
+    await demo_mass_assignment()
     print("\n✅ Demo complete.")
 
 
