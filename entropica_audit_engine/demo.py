@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 from entropica_audit_engine.rules.registry import build_default_registry
-from entropica_audit_engine.core.welford import WelfordTracker
+from entropica_audit_engine.core.welford import WelfordTracker, EWMAAnomalyTracker
 from entropica_audit_engine.core.queue_dynamics import QueueDynamicsTracker, AccelerationTracker
+from entropica_audit_engine.core.math_core import MathCore
 
 
 async def demo_bola():
@@ -30,62 +31,96 @@ async def demo_bola():
         else:
             print(f"✅ {label}: no finding")
 
-    # Classic auto-increment IDs, collected out of creation order (e.g. a
-    # paginated listing that doesn't return rows sorted by ID). Sequential
-    # scoring is order-independent now, so this is still caught.
+    # Classic auto-increment IDs, collected out of creation order
     sequential_shuffled = [1005, 1001, 1009, 1003, 1007, 1002, 1010, 1004, 1006, 1008, 1011]
     await run("Sequential IDs (collected out of order)", sequential_shuffled)
 
-    # High-entropy UUIDs — large alphabet, entropy signal applies and
-    # correctly finds nothing.
+    # High-entropy UUIDs
     import uuid
     random_ids = [str(uuid.uuid4()) for _ in range(10)]
     await run("Random UUIDs", random_ids)
 
-    # Small numeric keyspace: NOT sequential, NOT low per-character entropy
-    # in the old sense — but only ~90,000 possible values. This is exactly
-    # the case the old entropy-only check missed.
+    # Small numeric keyspace
     import random as _random
     _random.seed(7)
     small_keyspace = [str(_random.randint(10_000, 99_999)) for _ in range(12)]
     await run("Small-keyspace random numeric IDs (5-digit)", small_keyspace)
 
-    # Large numeric keyspace: also non-sequential, and this time genuinely
-    # hard to guess (~9 billion values). The old entropy signal flagged
-    # this as a false positive because ANY numeric string is capped at
-    # log2(10) bits/char; the keyspace-size signal correctly clears it.
+    # Large numeric keyspace
     _random.seed(11)
     large_keyspace = [str(_random.randint(1_000_000_000, 9_999_999_999)) for _ in range(12)]
     await run("Large-keyspace random numeric IDs (10-digit)", large_keyspace)
 
 
-def demo_welford():
+async def demo_excessive_data():
     print("\n" + "=" * 60)
-    print("2. Streaming latency anomaly (Welford)")
+    print("2. Excessive Data Exposure (field entropy)")
     print("=" * 60)
 
-    tracker = WelfordTracker()
-    latencies = [42, 45, 41, 44, 43, 40, 46, 200]  # last one is a spike
+    registry = build_default_registry()
+    rule = registry.get("API3:2023")
+
+    # Low-entropy internal tokens
+    finding = await rule.execute(
+        target_url="https://api.example.com/profile",
+        sample_values=["aaaa1", "aaaa2", "aaaa3", "aaaa4", "aaaa5", "aaaa6"],
+    )
+    if finding:
+        print(f"🚨 Low-entropy tokens: {finding.metrics}")
+    else:
+        print("✅ Low-entropy tokens: no finding (unexpected)")
+
+    # Sequential internal IDs leaking in a response field
+    finding = await rule.execute(
+        target_url="https://api.example.com/orders",
+        sample_values=list(range(5001, 5015)),
+    )
+    if finding:
+        print(f"🚨 Sequential field values: {finding.metrics}")
+    else:
+        print("✅ Sequential field values: no finding (unexpected)")
+
+    # High-entropy values should clear
+    import uuid
+    finding = await rule.execute(
+        target_url="https://api.example.com/sessions",
+        sample_values=[str(uuid.uuid4()) for _ in range(8)],
+    )
+    if finding:
+        print(f"🚨 Random UUIDs (should NOT trigger): {finding.metrics}")
+    else:
+        print("✅ Random UUIDs: no finding")
+
+
+def demo_welford_and_ewma():
+    print("\n" + "=" * 60)
+    print("3. Streaming latency anomaly (Welford + EWMA)")
+    print("=" * 60)
+
+    welford = WelfordTracker()
+    ewma = EWMAAnomalyTracker(lambda_=0.25, threshold=2.0, min_count=4)
+
+    # Baseline then a sustained elevation (not just a single spike)
+    latencies = [42, 45, 41, 44, 43, 40, 46, 120, 130, 125, 140, 135]
     for i, lat in enumerate(latencies, 1):
-        z = tracker.update(float(lat))
-        flag = " ← ANOMALY" if tracker.is_anomaly() else ""
-        print(f"  sample {i:2d}: {lat:5.1f} ms   z={z:6.2f}{flag}")
+        z = welford.update(float(lat))
+        s = ewma.update(z)
+        flag_w = " ← |Z|>3" if welford.is_anomaly() else ""
+        flag_e = " ← EWMA ALARM" if ewma.is_anomaly() else ""
+        print(
+            f"  sample {i:2d}: {lat:5.1f} ms   z={z:6.2f}   "
+            f"EWMA={s:5.2f}{flag_w}{flag_e}"
+        )
 
 
 def demo_queue():
     print("\n" + "=" * 60)
-    print("3. Queue dynamics + acceleration (API4)")
+    print("4. Queue dynamics + acceleration (API4)")
     print("=" * 60)
 
     q = QueueDynamicsTracker(drain_rate=15.0)
     acc = AccelerationTracker()
 
-    # Simulated attack: arrival rate ramps up hard and KEEPS ramping.
-    # is_brute_force now requires `sustained` consecutive accelerating
-    # windows (default 3), not just one spike — a single fast jump can be
-    # organic (e.g. a marketing link going out); several windows of
-    # sustained positive acceleration back-to-back is a much stronger
-    # automation signal.
     timeline = [
         (0.0, 5.0),
         (1.0, 8.0),
@@ -106,10 +141,38 @@ def demo_queue():
         )
 
 
+def demo_math_extras():
+    print("\n" + "=" * 60)
+    print("5. Math extras — Miller–Madow & keyspace CI")
+    print("=" * 60)
+
+    # Bias correction illustration
+    repetitive = "aaaaabaaaa"
+    h_plugin = MathCore.shannon_entropy(repetitive)
+    h_mm = MathCore.miller_madow_entropy(repetitive)
+    print(f"  Sample '{repetitive}'")
+    print(f"    Plugin entropy     : {h_plugin:.4f} bits")
+    print(f"    Miller–Madow       : {h_mm:.4f} bits  (bias-corrected)")
+
+    # Keyspace CI
+    import random
+    random.seed(42)
+    ids = [random.randint(10_000, 99_999) for _ in range(15)]
+    point = MathCore.estimated_keyspace_bits(ids)
+    ci = MathCore.keyspace_bits_ci(ids, confidence=0.95)
+    print(f"\n  5-digit numeric sample (n={len(ids)})")
+    print(f"    Point estimate     : {point:.2f} bits")
+    if ci:
+        _, lo, hi = ci
+        print(f"    95 % CI            : [{lo:.2f}, {hi:.2f}] bits")
+
+
 async def main():
     await demo_bola()
-    demo_welford()
+    await demo_excessive_data()
+    demo_welford_and_ewma()
     demo_queue()
+    demo_math_extras()
     print("\n✅ Demo complete.")
 
 

@@ -39,10 +39,9 @@ class RuleRegistry:
 def build_default_registry() -> RuleRegistry:
     """Factory that loads the built-in rules."""
     from .bola import PredictableResourceIDRule
+    from .excessive_data import ExcessiveDataExposureRule
 
     registry = RuleRegistry()
     registry.register(PredictableResourceIDRule())
-    # Future rules go here:
-    # registry.register(MassAssignmentRule())
-    # registry.register(ExcessiveDataExposureRule())
+    registry.register(ExcessiveDataExposureRule())
     return registry

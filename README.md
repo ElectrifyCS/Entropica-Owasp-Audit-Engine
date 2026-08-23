@@ -90,7 +90,79 @@ Treating the endpoint as a simple queue makes the overload condition intuitive: 
 
 ---
 
+### 4. Miller–Madow Bias Correction — Small-Sample Entropy
+
+**The problem**  
+The plug-in entropy estimator (section 1) is negatively biased on small samples — exactly the regime a live API probe operates in, since you rarely get thousands of observations of the same field before deciding whether it looks risky. Underestimating entropy makes a genuinely random field look more predictable than it is.
+
+**The mathematics**
+
+$$
+\mathbb{E}[\hat{H}_{\text{plugin}}] = H - \frac{K-1}{2n\ln 2} + O\!\left(\frac{1}{n^2}\right)
+$$
+
+where $K$ is the number of distinct symbols observed and $n$ is the sample size (Miller, 1955). Adding back the leading-order bias term gives the corrected estimator:
+
+$$
+\hat{H}_{\text{MM}} = \hat{H}_{\text{plugin}} + \frac{K-1}{2n\ln 2}
+$$
+
+**Why it matters**  
+I checked this against a brute-force Monte Carlo simulation (sampling from a known uniform distribution and comparing the average plug-in entropy to the true entropy) — the predicted bias matched the empirical bias closely, confirming the formula holds as advertised. For large $n$ the correction vanishes and it reduces to ordinary Shannon entropy; for the small samples typical of early probing it materially reduces the systematic under-estimate.
+
+---
+
+### 5. Order-Statistics Keyspace Estimator — How Big Is the ID Space?
+
+**The problem**  
+Entropy tells you how random the *values you saw* are, but not how large the *underlying keyspace* is. A handful of numeric IDs clustered in a tiny range is just as much a BOLA risk as sequential IDs, even if the samples themselves aren't literally consecutive.
+
+**The mathematics (German-tank problem)**  
+Assuming IDs are drawn uniformly from an unknown integer range of length $R$, the order statistics $X_{(1)} < \dots < X_{(n)}$ of a sample of size $n$ satisfy
+
+$$
+\mathbb{E}[X_{(n)} - X_{(1)}] = R \cdot \frac{n-1}{n+1}
+$$
+
+Solving for $R$ gives the unbiased point estimator $\hat{R} = (X_{(n)}-X_{(1)}) \cdot \frac{n+1}{n-1}$, and the keyspace size in bits is $\log_2 \hat{R}$.
+
+**The confidence interval — and a bug I caught and fixed**  
+My first draft of the CI treated $\operatorname{Var}(\ln \hat{R})$ as $\approx 2/n$, reasoning from a central-limit / Gumbel-tail argument. I tested that assumption with a Monte Carlo simulation and it was wrong — off by roughly a factor of $n$. The scaled range $(X_{(n)}-X_{(1)})/R$ is actually a *known* $\text{Beta}(n-1, 2)$ random variable, so there's no need for an asymptotic approximation at all:
+
+$$
+\operatorname{Var}\!\left[\frac{W}{R}\right] = \frac{2(n-1)}{(n+1)^2(n+2)} \;\sim\; \frac{2}{n^2}, \quad \text{not } \frac{2}{n}
+$$
+
+Propagating this exact variance through the delta method gives $\sigma_{\text{bits}} = \sqrt{\operatorname{Var}(\ln\hat R)}/\ln 2$, which tightens roughly as $1/n$ instead of $1/\sqrt{n}$. The corrected version is both more accurate *and* simpler to justify, since it uses exact moments rather than an asymptotic limit — a good reminder that "asymptotically justified" isn't the same as "checked against the actual distribution."
+
+---
+
+### 6. EWMA Sequential Test — Sustained vs. One-Off Latency Spikes
+
+**The problem**  
+A single $|Z| > 3$ from the Welford tracker (section 2) can just be a cache miss or a GC pause. A genuine timing side-channel or scripted attack shows up as a *sustained* elevation, and a raw three-sigma rule can't tell the two apart.
+
+**The mathematics**
+
+$$
+S_t = \lambda|Z_t| + (1-\lambda)S_{t-1}, \qquad S_0 = 0,\ \lambda \in (0,1]
+$$
+
+An alarm fires when $S_t$ exceeds a threshold $\tau$ after a minimum number of observations. The weight of an observation $k$ steps back decays as $(1-\lambda)^k$, so old anomalies stop mattering exponentially fast, using only $O(1)$ state on top of the existing Welford stream.
+
+**Why EWMA**  
+It's the natural next layer once you already have a z-score stream: single spikes stay below threshold, sustained elevation accumulates and trips the alarm. (Page's CUSUM is the formally optimal test for a sustained mean shift; EWMA is a simpler, easier-to-tune relative built on the same streaming infrastructure — CUSUM could be added later if needed.)
+
+---
+
+### 7. Excessive Data Exposure (API3:2023) — Same Triad, New Target
+
+The BOLA rule (section 1) applies the entropy/sequential/keyspace triad to *resource IDs in the URL*. The new `ExcessiveDataExposureRule` applies the exact same mathematical signals to *response field values* — catching over-exposed internal IDs or predictable tokens leaking through response bodies rather than just the endpoint path. No new math here, just a second consumer of the same primitives, which is what "pure math first" (see design principles below) was supposed to buy in the first place.
+
+---
+
 ## Project layout
+
 
 ```
 ENTROPICA_audit_engine/
