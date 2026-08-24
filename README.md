@@ -221,6 +221,10 @@ entropica_audit_engine/
 │   ├── app.py                  # Routes
 │   ├── models.py                # Pydantic request/response schemas
 │   └── store.py                 # In-memory findings store
+├── calibration/                # Threshold calibration harness (project notes, section 1)
+│   ├── generators.py            # Synthetic-but-realistic ID sample generators
+│   └── harness.py                # Raw-metric collection, JSONL persistence, threshold sweeps, report
+├── explain.py                  # Explainability layer: Finding metrics → human-readable rationale
 ├── tests/                      # Unit tests for every module above
 └── demo.py                     # Runnable end-to-end showcase
 ```
@@ -250,18 +254,22 @@ uvicorn entropica_audit_engine.api.app:app --reload
 | Math core (Miller–Madow + keyspace CI) | Done      |
 | Math core (Welford + EWMA)             | Done      |
 | Math core (Queue + Acceleration)       | Done      |
+| Online drain-rate (μ) estimation       | Done      |
 | BOLA rule (API1)                       | Done      |
 | Excessive Data Exposure rule (API3)    | Done      |
 | Unrestricted Resource Consumption (API4) | Done    |
 | Mass Assignment rule (API6)            | Done      |
 | Finding schema + Rule registry         | Done      |
+| Explainability layer (Finding → rationale) | Done  |
 | Async HTTP probing worker              | Done      |
 | FastAPI control plane                  | Done      |
+| Calibration harness — synthetic pass   | Done      |
+| Calibration — real/realistic traffic (crAPI, VAmPI, staging) | Not started — needs network access this repo's dev environment doesn't have |
 | Persistent storage (SQLite)            | Planned   |
 | Distributed workers (Celery)           | Planned   |
 | Auth on the control plane              | Planned   |
 
-The mathematical foundations, the active probing layer, and a usable control plane are all in place now. The next phase is persistence and making the probing layer safe to point at more than a single process's worth of targets.
+The mathematical foundations, the active probing layer, a usable control plane, and an explainability layer are all in place now. The calibration harness runs against synthetic data today; running it against real API traffic (crAPI, VAmPI, or a staging target) and folding those records into the same JSONL format is the one item the project notes call MANDATORY that's still open.
 
 ---
 

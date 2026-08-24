@@ -21,7 +21,8 @@ class PredictableResourceIDRule(BaseAuditRule):
 
       1. Sequential-score (0-1)         — always checked, numeric IDs only
       2. Estimated keyspace size (bits) — numeric IDs only (see below)
-      3. Average Shannon entropy        — non-numeric / mixed-alphabet IDs only
+      3. Average entropy (Miller-Madow by default) — non-numeric / mixed-
+         alphabet IDs only
 
     Signal 3 is deliberately NOT applied to purely-numeric ID samples.
     Per-character Shannon entropy is capped at log2(10) ≈ 3.32 bits for any
@@ -42,6 +43,7 @@ class PredictableResourceIDRule(BaseAuditRule):
         entropy_threshold: float = 3.0,
         sequential_threshold: float = 0.7,
         keyspace_bit_threshold: float = 32.0,
+        use_miller_madow: bool = True,
     ) -> None:
         super().__init__(
             rule_id="API1:2023",
@@ -65,6 +67,7 @@ class PredictableResourceIDRule(BaseAuditRule):
         # Security-token guidance (e.g. UUIDv4's ~122 bits) aims far higher;
         # this threshold is tunable per the sensitivity of the resource.
         self.keyspace_bit_threshold = keyspace_bit_threshold
+        self.use_miller_madow = use_miller_madow
 
     async def execute(self, target_url: str, **kwargs: Any) -> Optional[Finding]:
         """
@@ -94,12 +97,36 @@ class PredictableResourceIDRule(BaseAuditRule):
             small_keyspace = est_bits is not None and est_bits < self.keyspace_bit_threshold
             metrics["estimated_keyspace_bits"] = round(est_bits, 2) if est_bits is not None else None
             metrics["keyspace_bit_threshold"] = self.keyspace_bit_threshold
+
+            # Confidence interval on the keyspace estimate (exact Beta(n-1,2)
+            # moments — see MathCore.keyspace_bits_ci). A bare point estimate
+            # like "28.4 bits" implies more precision than a small sample
+            # actually supports; the interval is what makes the estimate
+            # defensible and is required for the explainability layer to
+            # render this signal honestly.
+            ci = MathCore.keyspace_bits_ci(sample_ids)
+            if ci is not None:
+                point, lo, hi = ci
+                metrics["keyspace_bits_ci_95"] = {
+                    "point": round(point, 2),
+                    "lower": round(lo, 2),
+                    "upper": round(hi, 2),
+                }
+
             if small_keyspace:
                 triggered_by.append("small_keyspace")
             triggered = highly_sequential or small_keyspace
         else:
             # --- Non-numeric / mixed-alphabet ID scheme: entropy signal ---
-            entropies = [MathCore.shannon_entropy(str(s)) for s in sample_ids]
+            # Miller-Madow by default: the plugin estimator is negatively
+            # biased on small samples (see MathCore.miller_madow_entropy),
+            # which is exactly the n=5-50 regime a live probe operates in.
+            # An uncorrected estimate here would make genuinely random IDs
+            # look more predictable than they are.
+            if self.use_miller_madow:
+                entropies = [MathCore.miller_madow_entropy(str(s)) for s in sample_ids]
+            else:
+                entropies = [MathCore.shannon_entropy(str(s)) for s in sample_ids]
             avg_entropy = sum(entropies) / len(entropies)
             norm_entropies = [MathCore.normalized_entropy(str(s)) for s in sample_ids]
             avg_norm = sum(norm_entropies) / len(norm_entropies)
@@ -107,6 +134,7 @@ class PredictableResourceIDRule(BaseAuditRule):
             metrics["avg_entropy_bits"] = round(avg_entropy, 3)
             metrics["avg_normalized_entropy"] = round(avg_norm, 3)
             metrics["entropy_threshold"] = self.entropy_threshold
+            metrics["estimator"] = "miller_madow" if self.use_miller_madow else "plugin"
             if low_entropy:
                 triggered_by.append("low_entropy")
             triggered = highly_sequential or low_entropy

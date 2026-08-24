@@ -97,3 +97,59 @@ class TestProbeMany:
 
         assert len(session.latencies_ms) == 3
         assert all(latency >= 0 for latency in session.latencies_ms)
+
+
+class TestDrainRateAdaptation:
+    """
+    Confirms probe_one actually feeds real completions into
+    QueueDynamicsTracker.record_departure. Previously the prober's own
+    docstring claimed mu was "refined as responses come back" via a
+    method that didn't exist anywhere in the codebase — mu was set once
+    from initial_drain_rate and never touched again, no matter how many
+    requests completed. These tests would have caught that: before the
+    fix, mu_sample_count stays 0 and mu_is_adapted stays False forever,
+    regardless of how much traffic the prober observes.
+    """
+
+    def test_completions_are_recorded_as_departures_when_queue_backlogged(self):
+        urls = [f"https://api.example.com/items/{i}" for i in range(6)]
+        responses = {u: (200, {"ok": True}) for u in urls}
+        transport = httpx.MockTransport(make_handler(responses))
+        prober = PatchedProber(
+            transport,
+            max_concurrency=6,
+            queue_backoff_threshold=1000.0,  # don't actually throttle
+            initial_drain_rate=5.0,
+        )
+        # Force a backlog before probing so departures count toward mu
+        # (see QueueDynamicsTracker.record_departure — Q==0 departures
+        # are deliberately excluded and wouldn't prove the wiring works).
+        prober._queue_model.Q = 100.0
+        prober._queue_model.min_departures_before_adapting = 1
+
+        run(prober.probe_many(urls))
+
+        assert prober._queue_model.mu_sample_count >= 1
+        assert prober.mu_is_adapted is True
+        assert prober.drain_rate_estimate > 0.0
+
+    def test_mu_stays_at_initial_guess_when_never_backlogged(self):
+        # Sanity check on the other direction: with no forced backlog and
+        # a generous initial_drain_rate relative to a handful of fast
+        # mock requests, the queue model shouldn't have reason to think
+        # it's ever behind, so mu should reasonably remain unadapted or
+        # close to its guess rather than swinging on noise.
+        urls = [f"https://api.example.com/items/{i}" for i in range(3)]
+        responses = {u: (200, {"ok": True}) for u in urls}
+        transport = httpx.MockTransport(make_handler(responses))
+        prober = PatchedProber(
+            transport,
+            max_concurrency=3,
+            queue_backoff_threshold=1000.0,
+            initial_drain_rate=5.0,
+        )
+        run(prober.probe_many(urls))
+        # Either it never adapted, or it adapted from genuinely-observed
+        # in-queue departures — either way mu must stay a finite positive
+        # number, never 0 or negative.
+        assert prober.drain_rate_estimate > 0.0

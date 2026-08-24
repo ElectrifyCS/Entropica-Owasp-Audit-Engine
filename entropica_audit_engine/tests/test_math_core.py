@@ -122,6 +122,83 @@ class TestQueueDynamics:
         assert q.Q == 0.0
 
 
+class TestOnlineDrainRateEstimation:
+    """
+    Section 3 of the project notes ("Adaptive Service Rate μ"): μ should
+    be discovered from observed departures while the queue is non-empty,
+    not held fixed at the constructor's initial guess forever.
+    """
+
+    def test_mu_unchanged_before_min_samples(self):
+        q = QueueDynamicsTracker(drain_rate=10.0, min_departures_before_adapting=5)
+        q.update(0.0, lambda_rate=50.0)
+        q.update(1.0, lambda_rate=50.0)  # two calls needed: first only seeds last_t
+        assert q.Q > 0
+        # Only 2 in-queue departures — below the min sample count.
+        q.record_departure(1.1)
+        q.record_departure(1.2)
+        assert q.mu == 10.0
+        assert q.mu_is_adapted is False
+
+    def test_mu_adapts_after_min_samples_while_queue_nonempty(self):
+        q = QueueDynamicsTracker(
+            drain_rate=10.0, mu_learning_rate=0.5, min_departures_before_adapting=3
+        )
+        q.update(0.0, lambda_rate=50.0)
+        q.update(1.0, lambda_rate=50.0)  # force Q > 0 so departures count
+        assert q.Q > 0
+        # Departures every 0.5s -> true rate is 2 req/s, far from the
+        # initial guess of 10.0.
+        t = 1.0
+        for _ in range(6):
+            t += 0.5
+            q.record_departure(t)
+        assert q.mu_is_adapted is True
+        assert q.mu != 10.0
+        assert q.mu == pytest.approx(2.0, rel=0.3)
+
+    def test_departures_while_queue_empty_do_not_move_mu(self):
+        # Q starts at 0 and nothing forces it up — departures here reflect
+        # arrival spacing, not server capacity, and must NOT be used.
+        q = QueueDynamicsTracker(
+            drain_rate=10.0, mu_learning_rate=0.5, min_departures_before_adapting=2
+        )
+        assert q.Q == 0.0
+        t = 0.0
+        for _ in range(6):
+            t += 0.01  # very fast departures, would imply ~100 req/s if used
+            q.record_departure(t)
+        assert q.mu == 10.0  # untouched
+        assert q.mu_sample_count == 0
+
+    def test_mu_floored_above_zero(self):
+        q = QueueDynamicsTracker(
+            drain_rate=10.0, mu_learning_rate=1.0, min_departures_before_adapting=1
+        )
+        q.update(0.0, lambda_rate=50.0)
+        q.update(1.0, lambda_rate=50.0)
+        assert q.Q > 0
+        q.record_departure(1.0)
+        # Enormous gap -> tiny instantaneous rate; must not collapse to
+        # ~0 (which would make Q grow without bound regardless of λ).
+        q.record_departure(10_000.0)
+        assert q.mu > 0.0
+
+    def test_reset_restores_initial_mu_and_adaptation_state(self):
+        q = QueueDynamicsTracker(drain_rate=7.5, mu_learning_rate=0.5, min_departures_before_adapting=2)
+        q.update(0.0, lambda_rate=50.0)
+        q.update(1.0, lambda_rate=50.0)
+        t = 1.0
+        for _ in range(5):
+            t += 0.5
+            q.record_departure(t)
+        assert q.mu != 7.5
+        q.reset()
+        assert q.mu == 7.5
+        assert q.mu_is_adapted is False
+        assert q.mu_sample_count == 0
+
+
 class TestAcceleration:
     def test_rising_rate(self):
         acc = AccelerationTracker(window=5)

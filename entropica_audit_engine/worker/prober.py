@@ -10,8 +10,18 @@ used by rules/resource_consumption.py to *detect* overload in a target.
 Instead of a fixed "N requests per second" ceiling, the prober tracks its
 own modelled queue length against the target and backs off exactly when
 Q(t) would start growing — i.e. it uses its own detection math to avoid
-becoming the attacker it's built to find. This also means a target's
-observed drain rate (μ) is discovered empirically rather than guessed.
+becoming the attacker it's built to find.
+
+The target's drain rate (μ) starts from a guess (`initial_drain_rate`)
+and is then refined online from real response timing: every completed
+request is recorded as a departure via
+`QueueDynamicsTracker.record_departure`, which maintains an EWMA of the
+observed completion rate for departures that occur while the modelled
+queue is non-empty (see that method's docstring for why only those
+departures count). Until `min_departures_before_adapting` such samples
+have been observed, μ stays at the initial guess — `mu_is_adapted` /
+`drain_rate_estimate` on the tracker expose whether the current value is
+still that guess or has actually been learned.
 """
 
 from __future__ import annotations
@@ -62,7 +72,9 @@ class AsyncProber:
         not the primary throttle.
     initial_drain_rate : float
         Starting estimate of the target's requests/sec capacity (μ).
-        Refined as responses come back (see `_update_drain_estimate`).
+        Refined online as real responses come back — see
+        `QueueDynamicsTracker.record_departure`, called from `probe_one`
+        on every completion.
     queue_backoff_threshold : float
         When the modelled queue length exceeds this, the prober pauses
         new requests until it drains — this is the self-governance loop.
@@ -112,8 +124,10 @@ class AsyncProber:
             t0 = time.monotonic()
             try:
                 resp = await client.get(url, timeout=self.request_timeout)
-                latency_ms = (time.monotonic() - t0) * 1000.0
+                completion_t = time.monotonic()
+                latency_ms = (completion_t - t0) * 1000.0
                 self._completed_count += 1
+                self._queue_model.record_departure(completion_t)
                 z = self._latency_tracker.update(latency_ms)
                 self._anomaly_tracker.update(z)
                 body: Any = None
@@ -128,8 +142,10 @@ class AsyncProber:
                     body=body,
                 )
             except httpx.HTTPError as exc:
-                latency_ms = (time.monotonic() - t0) * 1000.0
+                completion_t = time.monotonic()
+                latency_ms = (completion_t - t0) * 1000.0
                 self._completed_count += 1
+                self._queue_model.record_departure(completion_t)
                 return ProbeResult(
                     url=url, status_code=None, latency_ms=latency_ms, error=str(exc)
                 )
@@ -170,3 +186,16 @@ class AsyncProber:
     @property
     def queue_snapshot(self) -> float:
         return self._queue_model.Q
+
+    @property
+    def drain_rate_estimate(self) -> float:
+        """Current μ — either still the initial guess, or the online EWMA
+        estimate once enough in-queue departures have been observed
+        (see `mu_is_adapted`)."""
+        return self._queue_model.mu
+
+    @property
+    def mu_is_adapted(self) -> bool:
+        """True once drain_rate_estimate reflects observed departures
+        rather than the constructor's initial_drain_rate guess."""
+        return self._queue_model.mu_is_adapted

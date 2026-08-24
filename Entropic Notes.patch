@@ -1,0 +1,2151 @@
+diff --git a/README.md b/README.md
+index 78b4953..9017161 100644
+--- a/README.md
++++ b/README.md
+@@ -221,6 +221,10 @@ entropica_audit_engine/
+ │   ├── app.py                  # Routes
+ │   ├── models.py                # Pydantic request/response schemas
+ │   └── store.py                 # In-memory findings store
++├── calibration/                # Threshold calibration harness (project notes, section 1)
++│   ├── generators.py            # Synthetic-but-realistic ID sample generators
++│   └── harness.py                # Raw-metric collection, JSONL persistence, threshold sweeps, report
++├── explain.py                  # Explainability layer: Finding metrics → human-readable rationale
+ ├── tests/                      # Unit tests for every module above
+ └── demo.py                     # Runnable end-to-end showcase
+ ```
+@@ -250,18 +254,22 @@ uvicorn entropica_audit_engine.api.app:app --reload
+ | Math core (Miller–Madow + keyspace CI) | Done      |
+ | Math core (Welford + EWMA)             | Done      |
+ | Math core (Queue + Acceleration)       | Done      |
++| Online drain-rate (μ) estimation       | Done      |
+ | BOLA rule (API1)                       | Done      |
+ | Excessive Data Exposure rule (API3)    | Done      |
+ | Unrestricted Resource Consumption (API4) | Done    |
+ | Mass Assignment rule (API6)            | Done      |
+ | Finding schema + Rule registry         | Done      |
++| Explainability layer (Finding → rationale) | Done  |
+ | Async HTTP probing worker              | Done      |
+ | FastAPI control plane                  | Done      |
++| Calibration harness — synthetic pass   | Done      |
++| Calibration — real/realistic traffic (crAPI, VAmPI, staging) | Not started — needs network access this repo's dev environment doesn't have |
+ | Persistent storage (SQLite)            | Planned   |
+ | Distributed workers (Celery)           | Planned   |
+ | Auth on the control plane              | Planned   |
+ 
+-The mathematical foundations, the active probing layer, and a usable control plane are all in place now. The next phase is persistence and making the probing layer safe to point at more than a single process's worth of targets.
++The mathematical foundations, the active probing layer, a usable control plane, and an explainability layer are all in place now. The calibration harness runs against synthetic data today; running it against real API traffic (crAPI, VAmPI, or a staging target) and folding those records into the same JSONL format is the one item the project notes call MANDATORY that's still open.
+ 
+ ---
+ 
+diff --git a/calibration_output/calibration_records.jsonl b/calibration_output/calibration_records.jsonl
+new file mode 100644
+index 0000000..9928e17
+--- /dev/null
++++ b/calibration_output/calibration_records.jsonl
+@@ -0,0 +1,135 @@
++{"scheme": "auto_increment", "label": "vulnerable", "n": 5, "seed": 0, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 2.584962500721156, "keyspace_ci_lower": 1.8292326227965507, "keyspace_ci_upper": 3.3406923786457616, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 5, "seed": 1, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 2.584962500721156, "keyspace_ci_lower": 1.8292326227965507, "keyspace_ci_upper": 3.3406923786457616, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 5, "seed": 2, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 2.584962500721156, "keyspace_ci_lower": 1.8292326227965507, "keyspace_ci_upper": 3.3406923786457616, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 10, "seed": 0, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 3.4594316186372973, "keyspace_ci_lower": 3.074632799689604, "keyspace_ci_upper": 3.8442304375849905, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 10, "seed": 1, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 3.4594316186372973, "keyspace_ci_lower": 3.074632799689604, "keyspace_ci_upper": 3.8442304375849905, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 10, "seed": 2, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 3.4594316186372973, "keyspace_ci_lower": 3.074632799689604, "keyspace_ci_upper": 3.8442304375849905, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 20, "seed": 0, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 4.392317422778761, "keyspace_ci_lower": 4.196722549539533, "keyspace_ci_upper": 4.587912296017988, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 20, "seed": 1, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 4.392317422778761, "keyspace_ci_lower": 4.196722549539533, "keyspace_ci_upper": 4.587912296017988, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 20, "seed": 2, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 4.392317422778761, "keyspace_ci_lower": 4.196722549539533, "keyspace_ci_upper": 4.587912296017988, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 50, "seed": 0, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 5.672425341971495, "keyspace_ci_lower": 5.5932033248028885, "keyspace_ci_upper": 5.751647359140102, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 50, "seed": 1, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 5.672425341971495, "keyspace_ci_lower": 5.5932033248028885, "keyspace_ci_upper": 5.751647359140102, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 50, "seed": 2, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 5.672425341971495, "keyspace_ci_lower": 5.5932033248028885, "keyspace_ci_upper": 5.751647359140102, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 100, "seed": 0, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 6.658211482751795, "keyspace_ci_lower": 6.6184165362713, "keyspace_ci_upper": 6.698006429232289, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 100, "seed": 1, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 6.658211482751795, "keyspace_ci_lower": 6.6184165362713, "keyspace_ci_upper": 6.698006429232289, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "auto_increment", "label": "vulnerable", "n": 100, "seed": 2, "id_type": "numeric", "sequential_score": 1.0, "estimated_keyspace_bits": 6.658211482751795, "keyspace_ci_lower": 6.6184165362713, "keyspace_ci_upper": 6.698006429232289, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 5, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.498038896275968, "keyspace_ci_lower": 12.742309018351364, "keyspace_ci_upper": 14.253768774200573, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 5, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.37531099747307, "keyspace_ci_lower": 12.619581119548466, "keyspace_ci_upper": 14.131040875397675, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 5, "seed": 2, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 12.869497454729581, "keyspace_ci_lower": 12.113767576804976, "keyspace_ci_upper": 13.625227332654186, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 10, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.202583012749797, "keyspace_ci_lower": 12.817784193802103, "keyspace_ci_upper": 13.58738183169749, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 10, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.079855113946898, "keyspace_ci_lower": 12.695056294999205, "keyspace_ci_upper": 13.464653932894592, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 10, "seed": 2, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 12.669426434841522, "keyspace_ci_lower": 12.284627615893829, "keyspace_ci_upper": 13.054225253789216, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 20, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.121311977186254, "keyspace_ci_lower": 12.925717103947026, "keyspace_ci_upper": 13.316906850425482, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 20, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.125065041657543, "keyspace_ci_lower": 12.929470168418314, "keyspace_ci_upper": 13.32065991489677, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 20, "seed": 2, "id_type": "numeric", "sequential_score": 0.05263157894736842, "estimated_keyspace_bits": 13.191854682653595, "keyspace_ci_lower": 12.996259809414367, "keyspace_ci_upper": 13.387449555892823, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 50, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.18876859426593, "keyspace_ci_lower": 13.109546577097323, "keyspace_ci_upper": 13.267990611434538, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 50, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 13.166893201211563, "keyspace_ci_lower": 13.087671184042955, "keyspace_ci_upper": 13.24611521838017, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 50, "seed": 2, "id_type": "numeric", "sequential_score": 0.08163265306122448, "estimated_keyspace_bits": 13.115199616655184, "keyspace_ci_lower": 13.035977599486577, "keyspace_ci_upper": 13.194421633823792, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 100, "seed": 0, "id_type": "numeric", "sequential_score": 0.050505050505050504, "estimated_keyspace_bits": 13.159907959081828, "keyspace_ci_lower": 13.120113012601333, "keyspace_ci_upper": 13.199702905562322, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 100, "seed": 1, "id_type": "numeric", "sequential_score": 0.04040404040404041, "estimated_keyspace_bits": 13.15765475351757, "keyspace_ci_lower": 13.117859807037075, "keyspace_ci_upper": 13.197449699998064, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "short_numeric_token", "label": "vulnerable", "n": 100, "seed": 2, "id_type": "numeric", "sequential_score": 0.09090909090909091, "estimated_keyspace_bits": 13.128531417531828, "keyspace_ci_lower": 13.088736471051334, "keyspace_ci_upper": 13.168326364012323, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 5, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.4182762546566, "keyspace_ci_lower": 59.66254637673199, "keyspace_ci_upper": 61.174006132581205, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 5, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.29562340552932, "keyspace_ci_lower": 59.53989352760471, "keyspace_ci_upper": 61.05135328345393, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 5, "seed": 2, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 59.69317342676044, "keyspace_ci_lower": 58.93744354883583, "keyspace_ci_upper": 60.44890330468505, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 10, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.12282037113042, "keyspace_ci_lower": 59.73802155218273, "keyspace_ci_upper": 60.50761919007812, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 10, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.054191896893336, "keyspace_ci_lower": 59.66939307794564, "keyspace_ci_upper": 60.43899071584103, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 10, "seed": 2, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 59.92317597277587, "keyspace_ci_lower": 59.53837715382818, "keyspace_ci_upper": 60.30797479172357, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 20, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 59.97770366327061, "keyspace_ci_lower": 59.78210879003138, "keyspace_ci_upper": 60.17329853650984, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 20, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.11570609028582, "keyspace_ci_lower": 59.92011121704659, "keyspace_ci_upper": 60.31130096352505, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 20, "seed": 2, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 59.85820720432541, "keyspace_ci_lower": 59.66261233108618, "keyspace_ci_upper": 60.05380207756464, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 50, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 59.936426610091814, "keyspace_ci_lower": 59.85720459292321, "keyspace_ci_upper": 60.01564862726042, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 50, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.05128786832713, "keyspace_ci_lower": 59.972065851158526, "keyspace_ci_upper": 60.130509885495734, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 50, "seed": 2, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.046503209300965, "keyspace_ci_lower": 59.96728119213236, "keyspace_ci_upper": 60.12572522646957, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 100, "seed": 0, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.00730304540352, "keyspace_ci_lower": 59.96750809892302, "keyspace_ci_upper": 60.047097991884016, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 100, "seed": 1, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.02242723314303, "keyspace_ci_lower": 59.98263228666253, "keyspace_ci_upper": 60.062222179623525, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "large_random_int", "label": "safe", "n": 100, "seed": 2, "id_type": "numeric", "sequential_score": 0.0, "estimated_keyspace_bits": 60.01764257411686, "keyspace_ci_lower": 59.977847627636365, "keyspace_ci_upper": 60.05743752059736, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 5, "seed": 0, "id_type": "numeric", "sequential_score": 0.75, "estimated_keyspace_bits": 22.584963876581707, "keyspace_ci_lower": 21.829233998657102, "keyspace_ci_upper": 23.34069375450631, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 5, "seed": 1, "id_type": "numeric", "sequential_score": 0.75, "estimated_keyspace_bits": 22.584963876581707, "keyspace_ci_lower": 21.829233998657102, "keyspace_ci_upper": 23.34069375450631, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 5, "seed": 2, "id_type": "numeric", "sequential_score": 0.75, "estimated_keyspace_bits": 22.584963876581707, "keyspace_ci_lower": 21.829233998657102, "keyspace_ci_upper": 23.34069375450631, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 10, "seed": 0, "id_type": "numeric", "sequential_score": 0.7777777777777778, "estimated_keyspace_bits": 23.28950816503801, "keyspace_ci_lower": 22.904709346090318, "keyspace_ci_upper": 23.674306983985705, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 10, "seed": 1, "id_type": "numeric", "sequential_score": 0.7777777777777778, "estimated_keyspace_bits": 23.28950816503801, "keyspace_ci_lower": 22.904709346090318, "keyspace_ci_upper": 23.674306983985705, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 10, "seed": 2, "id_type": "numeric", "sequential_score": 0.7777777777777778, "estimated_keyspace_bits": 23.28950816503801, "keyspace_ci_lower": 22.904709346090318, "keyspace_ci_upper": 23.674306983985705, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 20, "seed": 0, "id_type": "numeric", "sequential_score": 0.7894736842105263, "estimated_keyspace_bits": 24.144391543169434, "keyspace_ci_lower": 23.948796669930207, "keyspace_ci_upper": 24.33998641640866, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 20, "seed": 1, "id_type": "numeric", "sequential_score": 0.7894736842105263, "estimated_keyspace_bits": 24.144391543169434, "keyspace_ci_lower": 23.948796669930207, "keyspace_ci_upper": 24.33998641640866, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 20, "seed": 2, "id_type": "numeric", "sequential_score": 0.7894736842105263, "estimated_keyspace_bits": 24.144391543169434, "keyspace_ci_lower": 23.948796669930207, "keyspace_ci_upper": 24.33998641640866, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 50, "seed": 0, "id_type": "numeric", "sequential_score": 0.7551020408163265, "estimated_keyspace_bits": 25.64267940310174, "keyspace_ci_lower": 25.563457385933134, "keyspace_ci_upper": 25.72190142027035, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 50, "seed": 1, "id_type": "numeric", "sequential_score": 0.7551020408163265, "estimated_keyspace_bits": 25.64267940310174, "keyspace_ci_lower": 25.563457385933134, "keyspace_ci_upper": 25.72190142027035, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 50, "seed": 2, "id_type": "numeric", "sequential_score": 0.7551020408163265, "estimated_keyspace_bits": 25.64267940310174, "keyspace_ci_lower": 25.563457385933134, "keyspace_ci_upper": 25.72190142027035, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 100, "seed": 0, "id_type": "numeric", "sequential_score": 0.7575757575757576, "estimated_keyspace_bits": 26.613818782249513, "keyspace_ci_lower": 26.57402383576902, "keyspace_ci_upper": 26.653613728730008, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 100, "seed": 1, "id_type": "numeric", "sequential_score": 0.7575757575757576, "estimated_keyspace_bits": 26.613818782249513, "keyspace_ci_lower": 26.57402383576902, "keyspace_ci_upper": 26.653613728730008, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "snowflake_like", "label": "mixed", "n": 100, "seed": 2, "id_type": "numeric", "sequential_score": 0.7575757575757576, "estimated_keyspace_bits": 26.613818782249513, "keyspace_ci_lower": 26.57402383576902, "keyspace_ci_upper": 26.653613728730008, "avg_entropy_plugin": null, "avg_entropy_mm": null, "avg_normalized_entropy": null}
++{"scheme": "uuidv4", "label": "safe", "n": 5, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.7010857519240346, "avg_entropy_mm": 3.9776023014277526, "avg_normalized_entropy": 0.9524586165357102}
++{"scheme": "uuidv4", "label": "safe", "n": 5, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.706606410033429, "avg_entropy_mm": 3.9871304457618386, "avg_normalized_entropy": 0.9513734645951688}
++{"scheme": "uuidv4", "label": "safe", "n": 5, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.7446883709905032, "avg_entropy_mm": 4.033227379168296, "avg_normalized_entropy": 0.9499744386622263}
++{"scheme": "uuidv4", "label": "safe", "n": 10, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6758626534199896, "avg_entropy_mm": 3.948371716699017, "avg_normalized_entropy": 0.9512721711771739}
++{"scheme": "uuidv4", "label": "safe", "n": 10, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.70160566264515, "avg_entropy_mm": 3.9801259552612143, "avg_normalized_entropy": 0.9515781763919117}
++{"scheme": "uuidv4", "label": "safe", "n": 10, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.780351539160697, "avg_entropy_mm": 4.074901776675526, "avg_normalized_entropy": 0.9521282779570258}
++{"scheme": "uuidv4", "label": "safe", "n": 20, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6830399004351952, "avg_entropy_mm": 3.954547092158049, "avg_normalized_entropy": 0.9543628065134971}
++{"scheme": "uuidv4", "label": "safe", "n": 20, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.697663196725572, "avg_entropy_mm": 3.9741797462292903, "avg_normalized_entropy": 0.9524686092934976}
++{"scheme": "uuidv4", "label": "safe", "n": 20, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.7379496988648904, "avg_entropy_mm": 4.022481220817991, "avg_normalized_entropy": 0.95274543569454}
++{"scheme": "uuidv4", "label": "safe", "n": 50, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.69248940174346, "avg_entropy_mm": 3.965799962267425, "avg_normalized_entropy": 0.9545738237464779}
++{"scheme": "uuidv4", "label": "safe", "n": 50, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.704342052990822, "avg_entropy_mm": 3.9804578538720703, "avg_normalized_entropy": 0.9543063330051007}
++{"scheme": "uuidv4", "label": "safe", "n": 50, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.7171345308157004, "avg_entropy_mm": 3.99765856654411, "avg_normalized_entropy": 0.9520234771266519}
++{"scheme": "uuidv4", "label": "safe", "n": 100, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.713449988384127, "avg_entropy_mm": 3.9913691580664867, "avg_normalized_entropy": 0.9544494643464134}
++{"scheme": "uuidv4", "label": "safe", "n": 100, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.696305516641911, "avg_entropy_mm": 3.9734231890793326, "avg_normalized_entropy": 0.9511399211959879}
++{"scheme": "uuidv4", "label": "safe", "n": 100, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.7145916559871996, "avg_entropy_mm": 3.995115691715609, "avg_normalized_entropy": 0.9516591440983653}
++{"scheme": "base62_token", "label": "safe", "n": 5, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.4516291673878228, "avg_entropy_mm": 4.064774559765633, "avg_normalized_entropy": 0.9904872732592965}
++{"scheme": "base62_token", "label": "safe", "n": 5, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.305714375685098, "avg_entropy_mm": 3.870769933366609, "avg_normalized_entropy": 0.9813704556087434}
++{"scheme": "base62_token", "label": "safe", "n": 5, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.4849625007211555, "avg_entropy_mm": 4.11013035177304, "avg_normalized_entropy": 0.9933894011467503}
++{"scheme": "base62_token", "label": "safe", "n": 10, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.4516291673878228, "avg_entropy_mm": 4.064774559765633, "avg_normalized_entropy": 0.9907492463604355}
++{"scheme": "base62_token", "label": "safe", "n": 10, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.3953384382031273, "avg_entropy_mm": 3.9904501425698244, "avg_normalized_entropy": 0.9871179552766078}
++{"scheme": "base62_token", "label": "safe", "n": 10, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.4349625007211557, "avg_entropy_mm": 4.042096663761928, "avg_normalized_entropy": 0.9900841017201255}
++{"scheme": "base62_token", "label": "safe", "n": 20, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.418295834054489, "avg_entropy_mm": 4.019418767758224, "avg_normalized_entropy": 0.9888145666980712}
++{"scheme": "base62_token", "label": "safe", "n": 20, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.4151504694621417, "avg_entropy_mm": 4.016273403165877, "avg_normalized_entropy": 0.9884700419477973}
++{"scheme": "base62_token", "label": "safe", "n": 20, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.4349625007211566, "avg_entropy_mm": 4.042096663761928, "avg_normalized_entropy": 0.9902656306417981}
++{"scheme": "base62_token", "label": "safe", "n": 50, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.385338438203127, "avg_entropy_mm": 3.9768434049676022, "avg_normalized_entropy": 0.9856099264121684}
++{"scheme": "base62_token", "label": "safe", "n": 50, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.4278547298770055, "avg_entropy_mm": 4.034988892917777, "avg_normalized_entropy": 0.9882342030018659}
++{"scheme": "base62_token", "label": "safe", "n": 50, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.424521396543672, "avg_entropy_mm": 4.029251067849629, "avg_normalized_entropy": 0.9886719199959921}
++{"scheme": "base62_token", "label": "safe", "n": 100, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.3899299173734, "avg_entropy_mm": 3.9826371300052816, "avg_normalized_entropy": 0.9861493333760929}
++{"scheme": "base62_token", "label": "safe", "n": 100, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.431188063210339, "avg_entropy_mm": 4.038923349184815, "avg_normalized_entropy": 0.9887210883471431}
++{"scheme": "base62_token", "label": "safe", "n": 100, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.424521396543672, "avg_entropy_mm": 4.029251067849629, "avg_normalized_entropy": 0.9885479416885208}
++{"scheme": "hex_token", "label": "safe", "n": 5, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.613364125623068, "avg_entropy_mm": 3.9064115558036385, "avg_normalized_entropy": 0.9502835470031041}
++{"scheme": "hex_token", "label": "safe", "n": 5, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.5617099849575027, "avg_entropy_mm": 3.8502489931352954, "avg_normalized_entropy": 0.9433829961711186}
++{"scheme": "hex_token", "label": "safe", "n": 5, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6638268376302365, "avg_entropy_mm": 3.965891111816363, "avg_normalized_entropy": 0.9527691830104059}
++{"scheme": "hex_token", "label": "safe", "n": 10, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.5563677788807944, "avg_entropy_mm": 3.83814415405442, "avg_normalized_entropy": 0.9489075023631166}
++{"scheme": "hex_token", "label": "safe", "n": 10, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.577112443999441, "avg_entropy_mm": 3.8656514521772336, "avg_normalized_entropy": 0.9466854104398863}
++{"scheme": "hex_token", "label": "safe", "n": 10, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6925870517485806, "avg_entropy_mm": 3.9991597479374854, "avg_normalized_entropy": 0.9553131993416575}
++{"scheme": "hex_token", "label": "safe", "n": 20, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.578535228661422, "avg_entropy_mm": 3.8625658148364366, "avg_normalized_entropy": 0.9516362998644933}
++{"scheme": "hex_token", "label": "safe", "n": 20, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.5837902015953267, "avg_entropy_mm": 3.8712021042724247, "avg_normalized_entropy": 0.9493449317949118}
++{"scheme": "hex_token", "label": "safe", "n": 20, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6371391026579203, "avg_entropy_mm": 3.9335678493405744, "avg_normalized_entropy": 0.9521347815616625}
++{"scheme": "hex_token", "label": "safe", "n": 50, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.5993973287788448, "avg_entropy_mm": 3.8874854947563597, "avg_normalized_entropy": 0.9520986939119201}
++{"scheme": "hex_token", "label": "safe", "n": 50, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6146845228851934, "avg_entropy_mm": 3.906379426464931, "avg_normalized_entropy": 0.9521939196350196}
++{"scheme": "hex_token", "label": "safe", "n": 50, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6155042924440006, "avg_entropy_mm": 3.908551722624571, "avg_normalized_entropy": 0.9504953034980739}
++{"scheme": "hex_token", "label": "safe", "n": 100, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.617861862770876, "avg_entropy_mm": 3.909556766350613, "avg_normalized_entropy": 0.9526894490427559}
++{"scheme": "hex_token", "label": "safe", "n": 100, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.6021983707140084, "avg_entropy_mm": 3.894344116494023, "avg_normalized_entropy": 0.9484110649120894}
++{"scheme": "hex_token", "label": "safe", "n": 100, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 3.611277432283218, "avg_entropy_mm": 3.903423178063233, "avg_normalized_entropy": 0.9505304597901473}
++{"scheme": "ulid_like", "label": "mixed", "n": 5, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.121330391101521, "avg_entropy_mm": 4.620724828332316, "avg_normalized_entropy": 0.9712494901583639}
++{"scheme": "ulid_like", "label": "mixed", "n": 5, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.117559429596343, "avg_entropy_mm": 4.62250269390748, "avg_normalized_entropy": 0.9672476468878897}
++{"scheme": "ulid_like", "label": "mixed", "n": 5, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.071405583442497, "avg_entropy_mm": 4.554153539432265, "avg_normalized_entropy": 0.969564916564989}
++{"scheme": "ulid_like", "label": "mixed", "n": 10, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.119444910348932, "avg_entropy_mm": 4.6160649340395565, "avg_normalized_entropy": 0.9720531456773379}
++{"scheme": "ulid_like", "label": "mixed", "n": 10, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.143539766143126, "avg_entropy_mm": 4.651257443994434, "avg_normalized_entropy": 0.9714915575171841}
++{"scheme": "ulid_like", "label": "mixed", "n": 10, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.084904718074524, "avg_entropy_mm": 4.570427087604464, "avg_normalized_entropy": 0.9716101987008976}
++{"scheme": "ulid_like", "label": "mixed", "n": 20, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.07713721804124, "avg_entropy_mm": 4.561272380801094, "avg_normalized_entropy": 0.9704959091621983}
++{"scheme": "ulid_like", "label": "mixed", "n": 20, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.119011136331273, "avg_entropy_mm": 4.615631160021897, "avg_normalized_entropy": 0.9730347160320745}
++{"scheme": "ulid_like", "label": "mixed", "n": 20, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.056963708434177, "avg_entropy_mm": 4.534162837343603, "avg_normalized_entropy": 0.9705004271392337}
++{"scheme": "ulid_like", "label": "mixed", "n": 50, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.034568990019981, "avg_entropy_mm": 4.508993705389235, "avg_normalized_entropy": 0.9668010783684664}
++{"scheme": "ulid_like", "label": "mixed", "n": 50, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.085475194254385, "avg_entropy_mm": 4.57432686003253, "avg_normalized_entropy": 0.9696625634794616}
++{"scheme": "ulid_like", "label": "mixed", "n": 50, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.03351452116082, "avg_entropy_mm": 4.505719705697938, "avg_normalized_entropy": 0.9679963620085762}
++{"scheme": "ulid_like", "label": "mixed", "n": 100, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.0221444659723655, "avg_entropy_mm": 4.494349650509484, "avg_normalized_entropy": 0.9652074062146478}
++{"scheme": "ulid_like", "label": "mixed", "n": 100, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.077602671346623, "avg_entropy_mm": 4.563402482230581, "avg_normalized_entropy": 0.9695380445375759}
++{"scheme": "ulid_like", "label": "mixed", "n": 100, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 4.038990994606022, "avg_entropy_mm": 4.512583385913226, "avg_normalized_entropy": 0.9682695942829541}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 5, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.3304930567574824, "avg_entropy_mm": 2.6991817894291064, "avg_normalized_entropy": 0.94007289335624}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 5, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.041169723231841, "avg_entropy_mm": 2.3457386763084, "avg_normalized_entropy": 0.9033848020163548}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 5, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.3137177789316277, "avg_entropy_mm": 2.6824065116032516, "avg_normalized_entropy": 0.9328481744414759}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 10, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.2776609734001108, "avg_entropy_mm": 2.6303197611729683, "avg_normalized_entropy": 0.9410314792152861}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 10, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.0550043065411354, "avg_entropy_mm": 2.3595732596176946, "avg_normalized_entropy": 0.9103020936710022}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 10, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.344327640066777, "avg_entropy_mm": 2.7210313451877846, "avg_normalized_entropy": 0.9354284849212643}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 20, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.2401338206103136, "avg_entropy_mm": 2.5807701497090965, "avg_normalized_entropy": 0.9407733729529852}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 20, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.0550043065411354, "avg_entropy_mm": 2.3595732596176946, "avg_normalized_entropy": 0.9103020936710022}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 20, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.1996659733039565, "avg_entropy_mm": 2.5403023024027394, "avg_normalized_entropy": 0.9228652892961333}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 50, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.302650112284192, "avg_entropy_mm": 2.664926866996309, "avg_normalized_entropy": 0.9375664401339527}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 50, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.069513917681093, "avg_entropy_mm": 2.3740828707576522, "avg_normalized_entropy": 0.9167428552422666}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 50, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.2864629733616493, "avg_entropy_mm": 2.648739728073766, "avg_normalized_entropy": 0.9304032066712119}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 100, "seed": 0, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.2945565428229204, "avg_entropy_mm": 2.6568332975350377, "avg_normalized_entropy": 0.9339848234025823}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 100, "seed": 1, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.2046985566517128, "avg_entropy_mm": 2.5445333885055574, "avg_normalized_entropy": 0.9261888749795248}
++{"scheme": "predictable_session_token", "label": "vulnerable", "n": 100, "seed": 2, "id_type": "non-numeric", "sequential_score": 0.0, "estimated_keyspace_bits": null, "keyspace_ci_lower": null, "keyspace_ci_upper": null, "avg_entropy_plugin": 2.2945565428229204, "avg_entropy_mm": 2.6568332975350377, "avg_normalized_entropy": 0.9339848234025823}
+diff --git a/calibration_output/calibration_report.md b/calibration_output/calibration_report.md
+new file mode 100644
+index 0000000..fed77dd
+--- /dev/null
++++ b/calibration_output/calibration_report.md
+@@ -0,0 +1,62 @@
++# ENTROPICA Calibration Report (synthetic pass)
++
++**Scope**: synthetic generators only (see `calibration/generators.py`). This is NOT the real/realistic-traffic pass the project notes call MANDATORY (OWASP crAPI, VAmPI, public APIs, staging) — that still needs to be run separately, from an environment with network access to those targets, and appended to this same record format.
++
++Total records: 135
++By label: {'vulnerable': 45, 'safe': 60, 'mixed': 30}
++
++## Per-scheme summary (at rule-default thresholds' native units)
++
++| scheme | label | id_type | metric | n | min | median | mean | p95 | max |
++|---|---|---|---|---|---|---|---|---|---|
++| auto_increment | vulnerable | numeric | keyspace_bits | 15 | 2.58 | 4.39 | 4.55 | 6.66 | 6.66 |
++| base62_token | safe | non-numeric | entropy_bits_mm | 15 | 3.87 | 4.03 | 4.02 | 4.06 | 4.11 |
++| hex_token | safe | non-numeric | entropy_bits_mm | 15 | 3.84 | 3.9 | 3.9 | 3.97 | 4.0 |
++| large_random_int | safe | numeric | keyspace_bits | 15 | 59.69 | 60.02 | 60.04 | 60.3 | 60.42 |
++| predictable_session_token | vulnerable | non-numeric | entropy_bits_mm | 15 | 2.35 | 2.63 | 2.56 | 2.7 | 2.72 |
++| short_numeric_token | vulnerable | numeric | keyspace_bits | 15 | 12.67 | 13.16 | 13.14 | 13.38 | 13.5 |
++| snowflake_like | mixed | numeric | keyspace_bits | 15 | 22.58 | 24.14 | 24.46 | 26.61 | 26.61 |
++| ulid_like | mixed | non-numeric | entropy_bits_mm | 15 | 4.49 | 4.56 | 4.57 | 4.62 | 4.65 |
++| uuidv4 | safe | non-numeric | entropy_bits_mm | 15 | 3.95 | 3.98 | 3.99 | 4.03 | 4.07 |
++
++## Entropy threshold sweep (non-numeric schemes)
++
++| entropy_threshold | tp | fp | tn | fn | tpr | fpr | precision | youden_j |
++|---|---|---|---|---|---|---|---|---|
++| 1.5 | 30 | 0 | 60 | 15 | 0.667 | 0.000 | 1.000 | 0.667 |
++| 2.0 | 30 | 0 | 60 | 15 | 0.667 | 0.000 | 1.000 | 0.667 |
++| 2.5 | 34 | 0 | 60 | 11 | 0.756 | 0.000 | 1.000 | 0.756 |
++| 3.0 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 3.5 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 4.0 | 45 | 31 | 29 | 0 | 1.000 | 0.517 | 0.592 | 0.483 |
++| 4.5 | 45 | 45 | 15 | 0 | 1.000 | 0.750 | 0.500 | 0.250 |
++| 5.0 | 45 | 45 | 15 | 0 | 1.000 | 0.750 | 0.500 | 0.250 |
++
++Highest Youden's J on this synthetic set: `entropy_threshold=3.0` (current rule default: 3.0). Advisory only — not applied automatically.
++
++## Keyspace-bits threshold sweep (numeric schemes)
++
++| keyspace_bit_threshold | tp | fp | tn | fn | tpr | fpr | precision | youden_j |
++|---|---|---|---|---|---|---|---|---|
++| 8 | 30 | 0 | 60 | 15 | 0.667 | 0.000 | 1.000 | 0.667 |
++| 12 | 30 | 0 | 60 | 15 | 0.667 | 0.000 | 1.000 | 0.667 |
++| 16 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 20 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 24 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 28 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 32 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 36 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++| 40 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
++
++Highest Youden's J on this synthetic set: `keyspace_bit_threshold=16` (current rule default: 32.0). Advisory only — not applied automatically.
++
++## Decisive-signal counts (among vulnerable-labeled records, at rule defaults)
++
++- `small_keyspace`: 30
++- `highly_sequential`: 15
++- `low_entropy`: 15
++
++## Miller-Madow correction size (mean bits added vs. plugin estimator)
++
++Mean: 0.4008 bits over 75 records.
++At n<=10 specifically: mean 0.4041 bits over 30 records — the small-sample regime section 2.1 of the notes calls out as where the correction matters most.
+diff --git a/entropica_audit_engine/calibration/__init__.py b/entropica_audit_engine/calibration/__init__.py
+new file mode 100644
+index 0000000..632ffdd
+--- /dev/null
++++ b/entropica_audit_engine/calibration/__init__.py
+@@ -0,0 +1,11 @@
++"""
++Calibration harness for the ENTROPICA Audit Engine (project notes, section 1).
++
++Two pieces:
++  generators.py — synthetic-but-realistic ID sample generators, labeled
++                   safe / vulnerable / mixed.
++  harness.py     — runs MathCore directly against samples (real or
++                    synthetic), stores raw metrics per sample, and lets
++                    you sweep rule thresholds against stored data without
++                    re-generating anything.
++"""
+diff --git a/entropica_audit_engine/calibration/generators.py b/entropica_audit_engine/calibration/generators.py
+new file mode 100644
+index 0000000..8739b3e
+--- /dev/null
++++ b/entropica_audit_engine/calibration/generators.py
+@@ -0,0 +1,192 @@
++"""
++Synthetic ID generators for the calibration harness (project notes,
++section 1, "Sources").
++
++Every generator returns (samples, label) where label is one of:
++
++  "safe"       — a properly-designed ID scheme; a well-calibrated rule
++                 should NOT flag it (a true negative if flagged = FP).
++  "vulnerable" — a genuinely weak ID scheme; a well-calibrated rule
++                 SHOULD flag it (a true positive if flagged = TP).
++  "mixed"      — a real-world scheme with partial predictability
++                 (snowflake IDs, ULIDs) that doesn't cleanly belong in
++                 either bucket. Excluded from the strict TP/FP/FN/TN
++                 sweep and reported on separately — labeling these as
++                 a hard safe/vulnerable binary would itself be a
++                 numerical-honesty violation of the kind these notes
++                 are about avoiding.
++
++The notes' own generator list (UUIDv4, ULID, snowflake, auto-increment,
++short tokens, base62) covers only ONE label per ID scheme (numeric IDs
++are all "vulnerable" or "mixed"; non-numeric IDs are all "safe" or
++"mixed"). A threshold sweep needs a negative example in each branch to
++compute a real false-positive rate, so two generators are added beyond
++the notes' list: `large_random_int` (a safe numeric ID) and
++`predictable_session_token` (a vulnerable non-numeric ID). Both are
++realistic, common real-world patterns, not synthetic edge cases invented
++just to pad the dataset.
++
++All generators are seeded for reproducibility — calibration numbers
++that change on every run because of unseeded randomness would defeat
++the purpose of writing them down.
++"""
++
++from __future__ import annotations
++
++import random
++import string
++import uuid
++from typing import Callable, Dict, List, Tuple
++
++Sample = object  # int or str
++GeneratorResult = Tuple[List[Sample], str]  # (samples, label)
++
++
++def _rng(seed: int) -> random.Random:
++    return random.Random(seed)
++
++
++# ----------------------------------------------------------------------
++# Numeric — vulnerable
++# ----------------------------------------------------------------------
++def generate_auto_increment(n: int, seed: int = 0) -> GeneratorResult:
++    """Classic auto-increment primary key. Textbook BOLA target."""
++    r = _rng(seed)
++    start = r.randint(1000, 50000)
++    return [start + i for i in range(n)], "vulnerable"
++
++
++def generate_short_numeric_token(n: int, seed: int = 0, digits: int = 4) -> GeneratorResult:
++    """Small fixed-width numeric token (e.g. a 4-digit invite/reset code)."""
++    r = _rng(seed)
++    lo, hi = 10 ** (digits - 1), 10 ** digits - 1
++    return [r.randint(lo, hi) for _ in range(n)], "vulnerable"
++
++
++# ----------------------------------------------------------------------
++# Numeric — safe
++# ----------------------------------------------------------------------
++def generate_large_random_int(n: int, seed: int = 0, bits: int = 60) -> GeneratorResult:
++    """
++    A numeric ID drawn uniformly from a genuinely large keyspace (e.g. a
++    properly randomized 64-bit-ish integer ID, not a database
++    auto-increment). Added beyond the notes' generator list: without a
++    safe numeric example, the keyspace-threshold sweep has no negative
++    class to measure a false-positive rate against.
++    """
++    r = _rng(seed)
++    upper = 2 ** bits
++    return [r.randint(0, upper) for _ in range(n)], "safe"
++
++
++# ----------------------------------------------------------------------
++# Numeric — mixed (partial predictability)
++# ----------------------------------------------------------------------
++def generate_snowflake_like(n: int, seed: int = 0) -> GeneratorResult:
++    """
++    Twitter-snowflake-style ID: (timestamp_ms << 22) | (machine_id << 12)
++    | sequence. Monotonically increasing over time and small-stepped
++    within the same millisecond, but with a genuinely large total
++    keyspace. Real systems use these; whether they should count as
++    "predictable" is exactly the kind of judgment call calibration data
++    is for, not a coin flip made once in a docstring.
++    """
++    r = _rng(seed)
++    machine_id = r.randint(0, 31)
++    seq = r.randint(0, 100)
++    # A plausible-looking ms-epoch value drawn from the seeded RNG rather
++    # than time.time(): the class of ID (small-stepped, time-ordered) is
++    # what matters for calibration, not that it lines up with the actual
++    # wall clock. Using real time here silently broke the "seeded for
++    # reproducibility" guarantee this module's docstring promises — two
++    # `collect()` passes a moment apart produced different records.
++    base_ms = r.randint(10 ** 12, 10 ** 13)
++    ids = []
++    for i in range(n):
++        ms = base_ms + (i // 4)  # a few IDs share each millisecond
++        seq = (seq + 1) % 4096
++        ids.append((ms << 22) | (machine_id << 12) | seq)
++    return ids, "mixed"
++
++
++# ----------------------------------------------------------------------
++# Non-numeric — safe
++# ----------------------------------------------------------------------
++def generate_uuidv4(n: int, seed: int = 0) -> GeneratorResult:
++    r = _rng(seed)
++    # uuid.uuid4() uses os.urandom internally and ignores a Random
++    # instance, so build v4-shaped UUIDs from the seeded RNG directly
++    # for reproducibility.
++    ids = []
++    for _ in range(n):
++        raw = r.getrandbits(128)
++        ids.append(str(uuid.UUID(int=raw, version=4)))
++    return ids, "safe"
++
++
++def generate_base62_token(n: int, seed: int = 0, length: int = 12) -> GeneratorResult:
++    r = _rng(seed)
++    alphabet = string.ascii_letters + string.digits  # 62 symbols
++    return ["".join(r.choices(alphabet, k=length)) for _ in range(n)], "safe"
++
++
++def generate_hex_token(n: int, seed: int = 0, length: int = 32) -> GeneratorResult:
++    r = _rng(seed)
++    return [f"{r.getrandbits(length * 4):0{length}x}" for _ in range(n)], "safe"
++
++
++# ----------------------------------------------------------------------
++# Non-numeric — mixed
++# ----------------------------------------------------------------------
++def generate_ulid_like(n: int, seed: int = 0) -> GeneratorResult:
++    """
++    ULID: a 48-bit timestamp prefix (lexicographically sortable, and
++    therefore partially predictable in time) followed by 80 bits of
++    randomness. Higher entropy than a snowflake ID but not the pure
++    randomness of a UUIDv4 — another real "mixed" case.
++    """
++    r = _rng(seed)
++    crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
++    # See generate_snowflake_like: seeded, not wall-clock, so this
++    # generator is actually reproducible rather than only appearing to be
++    # (the old version passed test_reproducible_given_same_seed only
++    # because both calls in that test land in the same millisecond).
++    base_ms = r.randint(10 ** 12, 10 ** 13)
++    ids = []
++    for i in range(n):
++        ms = base_ms + i
++        ts_part = "".join(crockford[(ms >> (5 * k)) % 32] for k in reversed(range(10)))
++        rand_part = "".join(r.choices(crockford, k=16))
++        ids.append(ts_part + rand_part)
++    return ids, "mixed"
++
++
++# ----------------------------------------------------------------------
++# Non-numeric — vulnerable
++# ----------------------------------------------------------------------
++def generate_predictable_session_token(n: int, seed: int = 0) -> GeneratorResult:
++    """
++    A low-alphabet, structurally repetitive token — e.g. a hand-rolled
++    "session_<counter>" scheme. Added beyond the notes' generator list:
++    without a vulnerable non-numeric example, the entropy-threshold
++    sweep has no positive class to measure a true-positive rate against.
++    """
++    r = _rng(seed)
++    start = r.randint(1, 500)
++    return [f"sess{start + i:05d}" for i in range(n)], "vulnerable"
++
++
++# ----------------------------------------------------------------------
++# Registry
++# ----------------------------------------------------------------------
++GENERATORS: Dict[str, Callable[..., GeneratorResult]] = {
++    "auto_increment": generate_auto_increment,
++    "short_numeric_token": generate_short_numeric_token,
++    "large_random_int": generate_large_random_int,
++    "snowflake_like": generate_snowflake_like,
++    "uuidv4": generate_uuidv4,
++    "base62_token": generate_base62_token,
++    "hex_token": generate_hex_token,
++    "ulid_like": generate_ulid_like,
++    "predictable_session_token": generate_predictable_session_token,
++}
+diff --git a/entropica_audit_engine/calibration/harness.py b/entropica_audit_engine/calibration/harness.py
+new file mode 100644
+index 0000000..ebef6f7
+--- /dev/null
++++ b/entropica_audit_engine/calibration/harness.py
+@@ -0,0 +1,507 @@
++"""
++Calibration harness (project notes, section 1 — "Real-world Calibration",
++MANDATORY).
++
++Scope of this module, stated plainly
++-------------------------------------
++This harness fully implements the "Synthetic but realistic generators"
++bullet from the notes' Sources list. It does NOT implement the other
++listed sources: OWASP crAPI / VAmPI, public APIs, or staging environments
++you control — those need live network access this environment doesn't
++have. Running `python -m entropica_audit_engine.calibration.harness`
++gives you a real, honest calibration pass against synthetic data — not a
++substitute for the real-traffic pass the notes call MANDATORY.
++
++The record format below is deliberately generator-agnostic: `collect()`
++builds CalibrationRecords from the synthetic generators, but
++`records_from_samples()` builds the exact same record shape from any
++(samples, label) pair you hand it — including real captures from crAPI,
++VAmPI, or a staging target. Point it at real data later and everything
++downstream (the sweeps, the report) works unchanged. Appending real
++records to the same JSONL file the synthetic pass writes is the intended
++way to close that gap, not a rewrite of this module.
++
++Why raw MathCore, not the rules
++--------------------------------
++Rule.execute() returns None when nothing crosses today's threshold,
++which throws away the metric value for every non-triggering sample —
++exactly the data a threshold sweep needs. This harness calls MathCore
++directly and stores the raw numbers; "would this trigger" is then a
++pure function of (record, threshold) computed after the fact, so a
++sweep never re-runs a generator or a rule.
++"""
++
++from __future__ import annotations
++
++import json
++import statistics
++from dataclasses import asdict, dataclass, field
++from pathlib import Path
++from typing import Dict, Iterable, List, Optional, Sequence, Tuple
++
++from entropica_audit_engine.core.math_core import MathCore
++
++from .generators import GENERATORS, GeneratorResult
++
++DEFAULT_SAMPLE_SIZES: Tuple[int, ...] = (5, 10, 20, 50, 100)
++DEFAULT_SEEDS: Tuple[int, ...] = (0, 1, 2)
++
++# Mirrors PredictableResourceIDRule's constructor defaults (rules/bola.py).
++# Kept as a separate constant rather than importing the rule, so this
++# module never depends on rules/ — calibration must stay usable even if
++# a rule's constructor signature changes.
++RULE_DEFAULTS = {
++    "entropy_threshold": 3.0,
++    "sequential_threshold": 0.7,
++    "keyspace_bit_threshold": 32.0,
++}
++
++
++# ----------------------------------------------------------------------
++# Record schema
++# ----------------------------------------------------------------------
++@dataclass
++class CalibrationRecord:
++    """
++    One (scheme, n, seed) observation. Every field is either an input
++    (scheme, label, n, seed) or a number MathCore actually computed —
++    nothing here is a rule's yes/no decision. Ground truth (`label`) is
++    "safe" / "vulnerable" / "mixed" (see generators.py for what each
++    means); for real captures rather than synthetic generators, use
++    "unknown" if there's no ground truth yet — sweeps and confusion
++    counts exclude anything that isn't exactly "safe" or "vulnerable".
++    """
++
++    scheme: str
++    label: str
++    n: int
++    seed: int
++    id_type: str  # "numeric" | "non-numeric"
++    sequential_score: float
++    estimated_keyspace_bits: Optional[float] = None
++    keyspace_ci_lower: Optional[float] = None
++    keyspace_ci_upper: Optional[float] = None
++    avg_entropy_plugin: Optional[float] = None
++    avg_entropy_mm: Optional[float] = None
++    avg_normalized_entropy: Optional[float] = None
++
++    def to_dict(self) -> dict:
++        return asdict(self)
++
++    @classmethod
++    def from_dict(cls, d: dict) -> "CalibrationRecord":
++        return cls(**d)
++
++
++def records_from_samples(
++    scheme: str, samples: Sequence, label: str, seed: int
++) -> CalibrationRecord:
++    """
++    Build a CalibrationRecord from any sample list — synthetic or real.
++    This is the one place raw samples get turned into stored metrics;
++    everything downstream only ever touches the record, never the
++    samples themselves (real captures may be sensitive; the record
++    intentionally does not retain the raw values).
++    """
++    n = len(samples)
++    seq_score = MathCore.sequential_score(samples)
++    numeric = MathCore.parse_numeric_ids(samples)
++
++    if numeric is not None:
++        est_bits = MathCore.estimated_keyspace_bits(samples)
++        ci = MathCore.keyspace_bits_ci(samples)
++        lo, hi = (ci[1], ci[2]) if ci is not None else (None, None)
++        return CalibrationRecord(
++            scheme=scheme,
++            label=label,
++            n=n,
++            seed=seed,
++            id_type="numeric",
++            sequential_score=seq_score,
++            estimated_keyspace_bits=est_bits,
++            keyspace_ci_lower=lo,
++            keyspace_ci_upper=hi,
++        )
++
++    plugin = [MathCore.shannon_entropy(str(s)) for s in samples]
++    mm = [MathCore.miller_madow_entropy(str(s)) for s in samples]
++    norm = [MathCore.normalized_entropy(str(s)) for s in samples]
++    return CalibrationRecord(
++        scheme=scheme,
++        label=label,
++        n=n,
++        seed=seed,
++        id_type="non-numeric",
++        sequential_score=seq_score,
++        avg_entropy_plugin=sum(plugin) / len(plugin),
++        avg_entropy_mm=sum(mm) / len(mm),
++        avg_normalized_entropy=sum(norm) / len(norm),
++    )
++
++
++def collect(
++    sample_sizes: Sequence[int] = DEFAULT_SAMPLE_SIZES,
++    seeds: Sequence[int] = DEFAULT_SEEDS,
++    generators: Dict[str, callable] = GENERATORS,
++) -> List[CalibrationRecord]:
++    """Run every registered generator at every (size, seed) pair."""
++    records: List[CalibrationRecord] = []
++    for scheme, gen in generators.items():
++        for n in sample_sizes:
++            for seed in seeds:
++                samples, label = gen(n, seed=seed)
++                records.append(records_from_samples(scheme, samples, label, seed))
++    return records
++
++
++# ----------------------------------------------------------------------
++# Persistence — JSON Lines (project notes: "JSON or simple tables")
++# ----------------------------------------------------------------------
++def save_jsonl(records: Iterable[CalibrationRecord], path: str) -> None:
++    p = Path(path)
++    p.parent.mkdir(parents=True, exist_ok=True)
++    with p.open("w") as f:
++        for r in records:
++            f.write(json.dumps(r.to_dict()) + "\n")
++
++
++def load_jsonl(path: str) -> List[CalibrationRecord]:
++    records = []
++    with Path(path).open() as f:
++        for line in f:
++            line = line.strip()
++            if line:
++                records.append(CalibrationRecord.from_dict(json.loads(line)))
++    return records
++
++
++# ----------------------------------------------------------------------
++# Decision logic mirrored from PredictableResourceIDRule, applied to
++# stored records instead of live samples — this is what makes a sweep
++# possible without re-running anything.
++# ----------------------------------------------------------------------
++def would_trigger(
++    r: CalibrationRecord,
++    entropy_threshold: float = RULE_DEFAULTS["entropy_threshold"],
++    sequential_threshold: float = RULE_DEFAULTS["sequential_threshold"],
++    keyspace_bit_threshold: float = RULE_DEFAULTS["keyspace_bit_threshold"],
++    use_mm: bool = True,
++) -> Tuple[bool, List[str]]:
++    triggered_by: List[str] = []
++    if r.sequential_score >= sequential_threshold:
++        triggered_by.append("highly_sequential")
++
++    if r.id_type == "numeric":
++        if (
++            r.estimated_keyspace_bits is not None
++            and r.estimated_keyspace_bits < keyspace_bit_threshold
++        ):
++            triggered_by.append("small_keyspace")
++    else:
++        entropy = r.avg_entropy_mm if use_mm else r.avg_entropy_plugin
++        if entropy is not None and entropy < entropy_threshold:
++            triggered_by.append("low_entropy")
++
++    return (len(triggered_by) > 0, triggered_by)
++
++
++# ----------------------------------------------------------------------
++# Confusion counts + sweeps
++# ----------------------------------------------------------------------
++@dataclass
++class ConfusionCounts:
++    tp: int = 0
++    fp: int = 0
++    tn: int = 0
++    fn: int = 0
++    excluded_mixed: int = 0
++    excluded_unknown: int = 0
++
++    @property
++    def tpr(self) -> Optional[float]:
++        denom = self.tp + self.fn
++        return self.tp / denom if denom else None
++
++    @property
++    def fpr(self) -> Optional[float]:
++        denom = self.fp + self.tn
++        return self.fp / denom if denom else None
++
++    @property
++    def precision(self) -> Optional[float]:
++        denom = self.tp + self.fp
++        return self.tp / denom if denom else None
++
++    @property
++    def youden_j(self) -> Optional[float]:
++        """TPR - FPR. Simple, standard threshold-quality summary; not
++        the only reasonable criterion (a precision-focused reading of
++        the same sweep can pick a different threshold) — surfaced as
++        one signal for a human to weigh, not an automatic answer."""
++        if self.tpr is None or self.fpr is None:
++            return None
++        return self.tpr - self.fpr
++
++
++def confusion(
++    records: Sequence[CalibrationRecord], **threshold_kwargs
++) -> ConfusionCounts:
++    c = ConfusionCounts()
++    for r in records:
++        if r.label == "mixed":
++            c.excluded_mixed += 1
++            continue
++        if r.label not in ("safe", "vulnerable"):
++            c.excluded_unknown += 1
++            continue
++        triggered, _ = would_trigger(r, **threshold_kwargs)
++        positive = r.label == "vulnerable"
++        if positive and triggered:
++            c.tp += 1
++        elif positive and not triggered:
++            c.fn += 1
++        elif not positive and triggered:
++            c.fp += 1
++        else:
++            c.tn += 1
++    return c
++
++
++def sweep(
++    records: Sequence[CalibrationRecord],
++    param: str,
++    values: Sequence[float],
++    **fixed_kwargs,
++) -> List[dict]:
++    """
++    Sweep one threshold parameter (must be a keyword `would_trigger`
++    accepts: entropy_threshold, sequential_threshold, or
++    keyspace_bit_threshold) across `values`, holding the others at
++    RULE_DEFAULTS unless overridden in `fixed_kwargs`.
++    """
++    rows = []
++    base = dict(RULE_DEFAULTS)
++    base.update(fixed_kwargs)
++    for v in values:
++        kwargs = dict(base)
++        kwargs[param] = v
++        c = confusion(records, **kwargs)
++        rows.append(
++            {
++                param: v,
++                "tp": c.tp,
++                "fp": c.fp,
++                "tn": c.tn,
++                "fn": c.fn,
++                "tpr": c.tpr,
++                "fpr": c.fpr,
++                "precision": c.precision,
++                "youden_j": c.youden_j,
++            }
++        )
++    return rows
++
++
++def best_by_youden(rows: List[dict], param: str) -> Optional[dict]:
++    """Row with the highest Youden's J (ties broken by lower FPR).
++    Returns None if every row has an undefined J (e.g. no data for
++    one class in this record set)."""
++    candidates = [r for r in rows if r["youden_j"] is not None]
++    if not candidates:
++        return None
++    return max(candidates, key=lambda r: (r["youden_j"], -r["fpr"]))
++
++
++# ----------------------------------------------------------------------
++# Decisive-signal counts (notes: "which signal is decisive most often")
++# ----------------------------------------------------------------------
++def decisive_signal_counts(
++    records: Sequence[CalibrationRecord], **threshold_kwargs
++) -> Dict[str, int]:
++    counts: Dict[str, int] = {}
++    for r in records:
++        if r.label != "vulnerable":
++            continue
++        _, triggered_by = would_trigger(r, **threshold_kwargs)
++        for signal in triggered_by:
++            counts[signal] = counts.get(signal, 0) + 1
++    return counts
++
++
++# ----------------------------------------------------------------------
++# Per-scheme summary stats (stand-in for full histograms/CDFs — see
++# module docstring; a plotting pass can build on these same records)
++# ----------------------------------------------------------------------
++def scheme_summary(records: Sequence[CalibrationRecord]) -> List[dict]:
++    by_scheme: Dict[str, List[CalibrationRecord]] = {}
++    for r in records:
++        by_scheme.setdefault(r.scheme, []).append(r)
++
++    rows = []
++    for scheme, recs in sorted(by_scheme.items()):
++        label = recs[0].label
++        id_type = recs[0].id_type
++        if id_type == "numeric":
++            vals = [r.estimated_keyspace_bits for r in recs if r.estimated_keyspace_bits is not None]
++            metric_name = "keyspace_bits"
++        else:
++            vals = [r.avg_entropy_mm for r in recs if r.avg_entropy_mm is not None]
++            metric_name = "entropy_bits_mm"
++        if not vals:
++            continue
++        vals_sorted = sorted(vals)
++        rows.append(
++            {
++                "scheme": scheme,
++                "label": label,
++                "id_type": id_type,
++                "metric": metric_name,
++                "n_records": len(vals),
++                "min": round(min(vals_sorted), 2),
++                "median": round(statistics.median(vals_sorted), 2),
++                "mean": round(sum(vals_sorted) / len(vals_sorted), 2),
++                "p95": round(vals_sorted[int(0.95 * (len(vals_sorted) - 1))], 2),
++                "max": round(max(vals_sorted), 2),
++            }
++        )
++    return rows
++
++
++# ----------------------------------------------------------------------
++# Report
++# ----------------------------------------------------------------------
++def render_markdown(
++    records: Sequence[CalibrationRecord],
++    entropy_sweep_values: Sequence[float] = (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0),
++    keyspace_sweep_values: Sequence[float] = (8, 12, 16, 20, 24, 28, 32, 36, 40),
++) -> str:
++    lines: List[str] = []
++    lines.append("# ENTROPICA Calibration Report (synthetic pass)")
++    lines.append("")
++    lines.append(
++        "**Scope**: synthetic generators only (see `calibration/generators.py`). "
++        "This is NOT the real/realistic-traffic pass the project notes call "
++        "MANDATORY (OWASP crAPI, VAmPI, public APIs, staging) — that still "
++        "needs to be run separately, from an environment with network access "
++        "to those targets, and appended to this same record format."
++    )
++    lines.append("")
++    lines.append(f"Total records: {len(records)}")
++    labels = {}
++    for r in records:
++        labels[r.label] = labels.get(r.label, 0) + 1
++    lines.append(f"By label: {labels}")
++    lines.append("")
++
++    lines.append("## Per-scheme summary (at rule-default thresholds' native units)")
++    lines.append("")
++    lines.append("| scheme | label | id_type | metric | n | min | median | mean | p95 | max |")
++    lines.append("|---|---|---|---|---|---|---|---|---|---|")
++    for row in scheme_summary(records):
++        lines.append(
++            f"| {row['scheme']} | {row['label']} | {row['id_type']} | {row['metric']} "
++            f"| {row['n_records']} | {row['min']} | {row['median']} | {row['mean']} "
++            f"| {row['p95']} | {row['max']} |"
++        )
++    lines.append("")
++
++    entropy_rows = sweep(records, "entropy_threshold", entropy_sweep_values)
++    lines.append("## Entropy threshold sweep (non-numeric schemes)")
++    lines.append("")
++    lines.append("| entropy_threshold | tp | fp | tn | fn | tpr | fpr | precision | youden_j |")
++    lines.append("|---|---|---|---|---|---|---|---|---|")
++    for row in entropy_rows:
++        lines.append(
++            f"| {row['entropy_threshold']} | {row['tp']} | {row['fp']} | {row['tn']} "
++            f"| {row['fn']} | {_fmt(row['tpr'])} | {_fmt(row['fpr'])} "
++            f"| {_fmt(row['precision'])} | {_fmt(row['youden_j'])} |"
++        )
++    best_entropy = best_by_youden(entropy_rows, "entropy_threshold")
++    lines.append("")
++    if best_entropy:
++        lines.append(
++            f"Highest Youden's J on this synthetic set: "
++            f"`entropy_threshold={best_entropy['entropy_threshold']}` "
++            f"(current rule default: {RULE_DEFAULTS['entropy_threshold']}). "
++            "Advisory only — not applied automatically."
++        )
++    lines.append("")
++
++    keyspace_rows = sweep(records, "keyspace_bit_threshold", keyspace_sweep_values)
++    lines.append("## Keyspace-bits threshold sweep (numeric schemes)")
++    lines.append("")
++    lines.append("| keyspace_bit_threshold | tp | fp | tn | fn | tpr | fpr | precision | youden_j |")
++    lines.append("|---|---|---|---|---|---|---|---|---|")
++    for row in keyspace_rows:
++        lines.append(
++            f"| {row['keyspace_bit_threshold']} | {row['tp']} | {row['fp']} | {row['tn']} "
++            f"| {row['fn']} | {_fmt(row['tpr'])} | {_fmt(row['fpr'])} "
++            f"| {_fmt(row['precision'])} | {_fmt(row['youden_j'])} |"
++        )
++    best_keyspace = best_by_youden(keyspace_rows, "keyspace_bit_threshold")
++    lines.append("")
++    if best_keyspace:
++        lines.append(
++            f"Highest Youden's J on this synthetic set: "
++            f"`keyspace_bit_threshold={best_keyspace['keyspace_bit_threshold']}` "
++            f"(current rule default: {RULE_DEFAULTS['keyspace_bit_threshold']}). "
++            "Advisory only — not applied automatically."
++        )
++    lines.append("")
++
++    decisive = decisive_signal_counts(records)
++    lines.append("## Decisive-signal counts (among vulnerable-labeled records, at rule defaults)")
++    lines.append("")
++    for signal, count in sorted(decisive.items(), key=lambda kv: -kv[1]):
++        lines.append(f"- `{signal}`: {count}")
++    lines.append("")
++
++    mm_deltas = [
++        r.avg_entropy_mm - r.avg_entropy_plugin
++        for r in records
++        if r.avg_entropy_mm is not None and r.avg_entropy_plugin is not None
++    ]
++    if mm_deltas:
++        lines.append("## Miller-Madow correction size (mean bits added vs. plugin estimator)")
++        lines.append("")
++        lines.append(f"Mean: {sum(mm_deltas) / len(mm_deltas):.4f} bits over {len(mm_deltas)} records.")
++        small_n = [r for r in records if r.n <= 10 and r.avg_entropy_mm is not None]
++        if small_n:
++            small_deltas = [r.avg_entropy_mm - r.avg_entropy_plugin for r in small_n]
++            lines.append(
++                f"At n<=10 specifically: mean {sum(small_deltas) / len(small_deltas):.4f} bits "
++                f"over {len(small_deltas)} records — the small-sample regime section 2.1 "
++                "of the notes calls out as where the correction matters most."
++            )
++        lines.append("")
++
++    return "\n".join(lines)
++
++
++def _fmt(x: Optional[float]) -> str:
++    return "-" if x is None else f"{x:.3f}"
++
++
++# ----------------------------------------------------------------------
++# CLI entrypoint
++# ----------------------------------------------------------------------
++def run(
++    output_dir: str = "calibration_output",
++    sample_sizes: Sequence[int] = DEFAULT_SAMPLE_SIZES,
++    seeds: Sequence[int] = DEFAULT_SEEDS,
++) -> Tuple[str, str]:
++    """Collect, save records + render report. Returns (jsonl_path, md_path)."""
++    records = collect(sample_sizes=sample_sizes, seeds=seeds)
++    out = Path(output_dir)
++    jsonl_path = str(out / "calibration_records.jsonl")
++    md_path = str(out / "calibration_report.md")
++    save_jsonl(records, jsonl_path)
++    Path(md_path).parent.mkdir(parents=True, exist_ok=True)
++    Path(md_path).write_text(render_markdown(records))
++    return jsonl_path, md_path
++
++
++if __name__ == "__main__":
++    jsonl_path, md_path = run()
++    print(f"Wrote {jsonl_path}")
++    print(f"Wrote {md_path}")
+diff --git a/entropica_audit_engine/core/queue_dynamics.py b/entropica_audit_engine/core/queue_dynamics.py
+index 4a4be9e..7f68580 100644
+--- a/entropica_audit_engine/core/queue_dynamics.py
++++ b/entropica_audit_engine/core/queue_dynamics.py
+@@ -34,15 +34,41 @@ class QueueDynamicsTracker:
+     faster than the server can drain it.
+     """
+ 
+-    def __init__(self, drain_rate: float = 10.0) -> None:
++    def __init__(
++        self,
++        drain_rate: float = 10.0,
++        mu_learning_rate: float = 0.2,
++        min_departures_before_adapting: int = 5,
++    ) -> None:
+         """
+-        drain_rate (μ): estimated requests the backend can process per second.
++        drain_rate (μ): starting estimate of requests the backend can
++        process per second. Refined online by `record_departure` once
++        enough in-queue departures have been observed (see below) —
++        this is the *initial guess*, not a fixed value for the tracker's
++        lifetime.
++
++        mu_learning_rate : EWMA smoothing factor (0-1) applied to each
++            new inter-departure-rate sample. Higher = adapts faster but
++            noisier; lower = smoother but slower to react to a real
++            capacity change.
++        min_departures_before_adapting : number of in-queue departure
++            samples required before the EWMA is trusted over the initial
++            guess. Guards against a single lucky/unlucky gap swinging μ
++            (and therefore Q) around on almost no evidence.
+         """
+         self.mu = drain_rate
++        self._initial_mu = drain_rate
+         self.Q: float = 0.0
+         self.last_t: Optional[float] = None
+         self.history: Deque[QueueSnapshot] = deque(maxlen=1000)
+ 
++        # --- online μ (drain-rate) estimation state ---
++        self.mu_learning_rate = mu_learning_rate
++        self.min_departures_before_adapting = min_departures_before_adapting
++        self._last_departure_t: Optional[float] = None
++        self._mu_ewma: Optional[float] = None
++        self.mu_sample_count: int = 0
++
+     def update(self, t: float, lambda_rate: float) -> float:
+         """
+         Advance the queue model.
+@@ -72,10 +98,64 @@ class QueueDynamicsTracker:
+         """Simple overload signal when queue grows beyond threshold."""
+         return self.Q >= threshold
+ 
++    def record_departure(self, t: float) -> None:
++        """
++        Record an actual observed completion ("departure") at time t —
++        e.g. an HTTP response actually came back, as opposed to the
++        modelled arrivals fed to `update()`.
++
++        Project notes, section 3 ("Adaptive Service Rate μ"): "when the
++        modelled queue is non-empty, departures reveal capacity. Simple
++        approach: exponentially weighted estimate of completion rate
++        while Q > 0."
++
++        While self.Q > 0 — the model currently believes arrivals are
++        outpacing drain — the actual gap since the last departure is
++        evidence of the real service rate:
++
++            μ̂_k = α · (1 / Δt_departure) + (1 − α) · μ̂_{k−1}
++
++        Departures observed while Q == 0 still update the timing
++        baseline (so the next in-queue gap is measured correctly) but do
++        NOT feed the estimate: with no backlog, inter-departure spacing
++        reflects arrival spacing, not the server's true capacity — using
++        it would bias μ toward whatever rate the prober happens to be
++        issuing requests at, not what the target can actually absorb.
++
++        `self.mu` is only overwritten once `min_departures_before_adapting`
++        in-queue samples have accumulated, and is floored at a small
++        positive value — an estimate that collapsed to ~0 would make Q
++        grow without bound on the next `update()` call regardless of the
++        true arrival rate.
++        """
++        if self._last_departure_t is not None and self.Q > 0:
++            dt = t - self._last_departure_t
++            if dt > 1e-6:
++                instantaneous_rate = 1.0 / dt
++                if self._mu_ewma is None:
++                    self._mu_ewma = instantaneous_rate
++                else:
++                    a = self.mu_learning_rate
++                    self._mu_ewma = a * instantaneous_rate + (1 - a) * self._mu_ewma
++                self.mu_sample_count += 1
++                if self.mu_sample_count >= self.min_departures_before_adapting:
++                    self.mu = max(0.1, self._mu_ewma)
++
++        self._last_departure_t = t
++
++    @property
++    def mu_is_adapted(self) -> bool:
++        """True once μ reflects observed departures rather than the initial guess."""
++        return self.mu_sample_count >= self.min_departures_before_adapting
++
+     def reset(self) -> None:
+         self.Q = 0.0
+         self.last_t = None
+         self.history.clear()
++        self.mu = self._initial_mu
++        self._last_departure_t = None
++        self._mu_ewma = None
++        self.mu_sample_count = 0
+ 
+ 
+ class AccelerationTracker:
+diff --git a/entropica_audit_engine/explain.py b/entropica_audit_engine/explain.py
+new file mode 100644
+index 0000000..de9de02
+--- /dev/null
++++ b/entropica_audit_engine/explain.py
+@@ -0,0 +1,276 @@
++"""
++ENTROPICA Explainability Layer (project notes, section 6)
++
++A pure presentation layer that turns a Finding's metrics dictionary into
++a short, human-readable rationale a security engineer can hand to a
++product owner without translating bits and z-scores themselves.
++
++Guiding constraint: this module contains NO detection logic. Every
++number in the output text already exists on the Finding; this file only
++formats it. If a Finding doesn't carry a number (e.g. a rule that hasn't
++been backported to compute a CI), the explanation degrades gracefully
++by omitting that clause rather than inventing a value.
++
++Because every rule's metrics dict has its own shape (see rules/bola.py,
++rules/excessive_data.py, rules/resource_consumption.py,
++rules/mass_assignment.py), explanation is dispatched per rule_id. A rule
++not explicitly handled here still gets a readable (if generic) sentence
++via `_explain_generic`, rather than a blank string — adding a new rule
++should never silently produce unexplained Findings.
++"""
++
++from __future__ import annotations
++
++from typing import Callable, Dict, Optional
++
++from .rules.base import Finding
++
++# Assumed probing rate used only to translate a keyspace size into a
++# human "how long to enumerate" estimate. This is explicitly an
++# assumption, not a measured value — it's surfaced in the text itself
++# so nobody mistakes it for something the engine observed.
++DEFAULT_PROBE_RATE_RPS = 20.0
++
++
++# ----------------------------------------------------------------------
++# Formatting helpers
++# ----------------------------------------------------------------------
++def _human_count(n: float) -> str:
++    """Render a value count with the precision the number deserves."""
++    if n < 1000:
++        return f"{n:,.0f}"
++    if n < 1_000_000:
++        return f"{n / 1000:,.1f}K".replace(".0K", "K")
++    if n < 1_000_000_000:
++        return f"{n / 1_000_000:,.1f}M".replace(".0M", "M")
++    return f"{n / 1_000_000_000:,.1f}B".replace(".0B", "B")
++
++
++def _human_duration(seconds: float) -> str:
++    """Render a duration the way an engineer would say it out loud."""
++    if seconds < 1:
++        return "under a second"
++    if seconds < 60:
++        return f"about {seconds:.0f} seconds"
++    if seconds < 3600:
++        return f"about {seconds / 60:.0f} minutes"
++    if seconds < 86400:
++        hours = seconds / 3600
++        return "well under an hour" if hours < 1.5 else f"about {hours:.0f} hours"
++    if seconds < 86400 * 30:
++        return f"about {seconds / 86400:.0f} days"
++    if seconds < 86400 * 365:
++        return f"about {seconds / (86400 * 30):.0f} months"
++    return f"about {seconds / (86400 * 365):.1f} years"
++
++
++def _keyspace_clause(metrics: dict, rate_rps: float) -> Optional[str]:
++    """
++    Shared by every rule that surfaces estimated_keyspace_bits +
++    keyspace_bits_ci_95 (BOLA, Excessive Data Exposure). Returns None if
++    the Finding doesn't carry these keys — callers must handle that by
++    omitting the clause, not by fabricating one.
++    """
++    ci = metrics.get("keyspace_bits_ci_95")
++    point = metrics.get("estimated_keyspace_bits")
++    if point is None:
++        return None
++
++    if ci is not None:
++        lo, hi = ci["lower"], ci["upper"]
++        values_lo, values_hi = 2 ** lo, 2 ** hi
++        range_txt = (
++            f"Estimated keyspace \u2248 {point} bits (95% CI {lo}\u2013{hi}). "
++            f"Roughly {_human_count(values_lo)}\u2013{_human_count(values_hi)} values."
++        )
++    else:
++        range_txt = f"Estimated keyspace \u2248 {point} bits (point estimate only, no CI on this Finding)."
++
++    values_point = 2 ** point
++    seconds = values_point / rate_rps if rate_rps > 0 else float("inf")
++    enum_txt = (
++        f"At {rate_rps:.0f} req/s this space is enumerable in "
++        f"{_human_duration(seconds)}."
++    )
++    return f"{range_txt} {enum_txt}"
++
++
++def _entropy_clause(metrics: dict) -> Optional[str]:
++    """Shared by BOLA and Excessive Data Exposure's non-numeric branch."""
++    avg_bits = metrics.get("avg_entropy_bits")
++    if avg_bits is None:
++        return None
++    estimator = metrics.get("estimator", "plugin")
++    threshold = metrics.get("entropy_threshold")
++    norm = metrics.get("avg_normalized_entropy")
++    estimator_txt = "bias-corrected Miller\u2013Madow" if estimator == "miller_madow" else "plugin"
++    pct = f", {norm * 100:.0f}% of the maximum for the observed alphabet" if norm is not None else ""
++    thr_txt = f" (below the {threshold}-bit threshold)" if threshold is not None else ""
++    return (
++        f"Average entropy \u2248 {avg_bits} bits per symbol ({estimator_txt} "
++        f"estimator){pct}{thr_txt}."
++    )
++
++
++def _sequential_clause(metrics: dict) -> Optional[str]:
++    score = metrics.get("sequential_score")
++    if score is None:
++        return None
++    threshold = metrics.get("sequential_threshold")
++    flagged = "highly_sequential" in metrics.get("triggered_by", [])
++    if not flagged and threshold is not None and score < threshold:
++        return None  # not a contributing signal; don't clutter the text
++    return f"Combined with a sequential score of {score} (threshold {threshold})." if threshold is not None else None
++
++
++# ----------------------------------------------------------------------
++# Per-rule explainers
++# ----------------------------------------------------------------------
++def _explain_bola(finding: Finding, rate_rps: float) -> str:
++    m = finding.metrics
++    parts = []
++    scheme = finding.evidence.get("id_scheme", "unknown")
++    if scheme == "numeric":
++        clause = _keyspace_clause(m, rate_rps)
++        if clause:
++            parts.append(clause)
++    else:
++        clause = _entropy_clause(m)
++        if clause:
++            parts.append(clause)
++
++    seq_clause = _sequential_clause(m)
++    if seq_clause:
++        parts.append(seq_clause)
++
++    verdict = (
++        "This is a high-confidence predictable-ID (BOLA) surface."
++        if len(m.get("triggered_by", [])) > 1
++        else "This is enough on its own to flag a predictable-ID (BOLA) risk."
++    )
++    parts.append(verdict)
++    return " ".join(parts)
++
++
++def _explain_excessive_data_field(field_metrics: dict, field_name: str, rate_rps: float) -> str:
++    parts = [f"Field `{field_name}`:"]
++    keyspace_clause = _keyspace_clause(field_metrics, rate_rps)
++    entropy_clause = _entropy_clause(field_metrics)
++    if keyspace_clause:
++        parts.append(keyspace_clause)
++    if entropy_clause:
++        parts.append(entropy_clause)
++    seq_clause = _sequential_clause(field_metrics)
++    if seq_clause:
++        parts.append(seq_clause)
++    return " ".join(parts)
++
++
++def _explain_excessive_data(finding: Finding, rate_rps: float) -> str:
++    m = finding.metrics
++    if "offenders" in m:
++        # Aggregate finding across many fields (_evaluate_many).
++        offenders = m["offenders"]
++        names = ", ".join(f"`{o['field']}`" for o in offenders)
++        header = (
++            f"{len(offenders)} field(s) show excessive-exposure signals: {names}."
++        )
++        details = [
++            _explain_excessive_data_field(o["metrics"], o["field"], rate_rps)
++            for o in offenders
++        ]
++        return header + " " + " ".join(details)
++
++    # Single-field finding (_evaluate_one).
++    field_name = m.get("field", "value")
++    return _explain_excessive_data_field(m, field_name, rate_rps)
++
++
++def _explain_resource_consumption(finding: Finding, rate_rps: float) -> str:
++    m = finding.metrics
++    parts = []
++    triggered = m.get("triggered_by", [])
++    if "queue_overload" in triggered:
++        parts.append(
++            f"Modelled queue length reached {m.get('max_queue_length')} against a "
++            f"threshold of {m.get('queue_threshold')} \u2014 arrivals sustained a rate "
++            "above the endpoint's estimated drain capacity."
++        )
++    if "sustained_acceleration" in triggered:
++        parts.append(
++            f"Request rate showed sustained positive acceleration above "
++            f"{m.get('accel_threshold')} for {m.get('sustained_windows')} consecutive "
++            "windows \u2014 a pattern consistent with a scripted ramp rather than "
++            "organic traffic growth."
++        )
++    parts.append(
++        "This indicates the endpoint lacks effective rate limiting against "
++        "unrestricted resource consumption."
++    )
++    return " ".join(parts)
++
++
++def _explain_mass_assignment(finding: Finding, rate_rps: float) -> str:
++    m = finding.metrics
++    e = finding.evidence
++    parts = []
++    write_only = e.get("write_only_fields", [])
++    if write_only:
++        field_list = ", ".join(f"`{f}`" for f in write_only)
++        plural = "s are" if len(write_only) != 1 else " is"
++        parts.append(
++            f"{len(write_only)} field{plural} accepted on write but never appear "
++            f"in any read response: {field_list}. A field a client can set but "
++            "never observe reading back is very unlikely to be intentional "
++            "client-facing design."
++        )
++    j = m.get("jaccard_index")
++    thr = m.get("jaccard_threshold")
++    if j is not None and "low_field_overlap" in m.get("triggered_by", []):
++        parts.append(
++            f"Read/write field overlap (Jaccard index) is {j}, below the {thr} "
++            "threshold \u2014 the writable and readable surfaces have diverged "
++            "structurally."
++        )
++    return " ".join(parts) if parts else "Read and write field sets diverge structurally."
++
++
++def _explain_generic(finding: Finding, rate_rps: float) -> str:
++    """
++    Fallback for any rule_id not explicitly handled above. Keeps the
++    layer total: a new rule added later still produces readable text
++    instead of a blank explanation, using whatever metrics it happens
++    to carry.
++    """
++    triggered = finding.metrics.get("triggered_by")
++    trig_txt = f" Triggered by: {', '.join(triggered)}." if triggered else ""
++    return f"{finding.description}{trig_txt}"
++
++
++_EXPLAINERS: Dict[str, Callable[[Finding, float], str]] = {
++    "API1:2023": _explain_bola,
++    "API3:2023": _explain_excessive_data,
++    "API4:2023": _explain_resource_consumption,
++    "API6:2023": _explain_mass_assignment,
++}
++
++
++# ----------------------------------------------------------------------
++# Public API
++# ----------------------------------------------------------------------
++def explain(finding: Finding, rate_rps: float = DEFAULT_PROBE_RATE_RPS) -> str:
++    """
++    Render a Finding's metrics as a short, human-readable rationale.
++
++    `rate_rps` is only used for the keyspace enumeration-time estimate
++    (BOLA / Excessive Data Exposure numeric branches) and is stated
++    explicitly in the output text since it's an assumption, not
++    something the engine measured.
++    """
++    handler = _EXPLAINERS.get(finding.rule_id, _explain_generic)
++    return handler(finding, rate_rps)
++
++
++def explain_all(findings, rate_rps: float = DEFAULT_PROBE_RATE_RPS) -> Dict[str, str]:
++    """Convenience: explain a list of Findings, keyed by rule_id + target."""
++    return {f"{f.rule_id}:{f.target}": explain(f, rate_rps) for f in findings}
+diff --git a/entropica_audit_engine/rules/bola.py b/entropica_audit_engine/rules/bola.py
+index 735f4b2..d12d8c4 100644
+--- a/entropica_audit_engine/rules/bola.py
++++ b/entropica_audit_engine/rules/bola.py
+@@ -21,7 +21,8 @@ class PredictableResourceIDRule(BaseAuditRule):
+ 
+       1. Sequential-score (0-1)         — always checked, numeric IDs only
+       2. Estimated keyspace size (bits) — numeric IDs only (see below)
+-      3. Average Shannon entropy        — non-numeric / mixed-alphabet IDs only
++      3. Average entropy (Miller-Madow by default) — non-numeric / mixed-
++         alphabet IDs only
+ 
+     Signal 3 is deliberately NOT applied to purely-numeric ID samples.
+     Per-character Shannon entropy is capped at log2(10) ≈ 3.32 bits for any
+@@ -42,6 +43,7 @@ class PredictableResourceIDRule(BaseAuditRule):
+         entropy_threshold: float = 3.0,
+         sequential_threshold: float = 0.7,
+         keyspace_bit_threshold: float = 32.0,
++        use_miller_madow: bool = True,
+     ) -> None:
+         super().__init__(
+             rule_id="API1:2023",
+@@ -65,6 +67,7 @@ class PredictableResourceIDRule(BaseAuditRule):
+         # Security-token guidance (e.g. UUIDv4's ~122 bits) aims far higher;
+         # this threshold is tunable per the sensitivity of the resource.
+         self.keyspace_bit_threshold = keyspace_bit_threshold
++        self.use_miller_madow = use_miller_madow
+ 
+     async def execute(self, target_url: str, **kwargs: Any) -> Optional[Finding]:
+         """
+@@ -94,12 +97,36 @@ class PredictableResourceIDRule(BaseAuditRule):
+             small_keyspace = est_bits is not None and est_bits < self.keyspace_bit_threshold
+             metrics["estimated_keyspace_bits"] = round(est_bits, 2) if est_bits is not None else None
+             metrics["keyspace_bit_threshold"] = self.keyspace_bit_threshold
++
++            # Confidence interval on the keyspace estimate (exact Beta(n-1,2)
++            # moments — see MathCore.keyspace_bits_ci). A bare point estimate
++            # like "28.4 bits" implies more precision than a small sample
++            # actually supports; the interval is what makes the estimate
++            # defensible and is required for the explainability layer to
++            # render this signal honestly.
++            ci = MathCore.keyspace_bits_ci(sample_ids)
++            if ci is not None:
++                point, lo, hi = ci
++                metrics["keyspace_bits_ci_95"] = {
++                    "point": round(point, 2),
++                    "lower": round(lo, 2),
++                    "upper": round(hi, 2),
++                }
++
+             if small_keyspace:
+                 triggered_by.append("small_keyspace")
+             triggered = highly_sequential or small_keyspace
+         else:
+             # --- Non-numeric / mixed-alphabet ID scheme: entropy signal ---
+-            entropies = [MathCore.shannon_entropy(str(s)) for s in sample_ids]
++            # Miller-Madow by default: the plugin estimator is negatively
++            # biased on small samples (see MathCore.miller_madow_entropy),
++            # which is exactly the n=5-50 regime a live probe operates in.
++            # An uncorrected estimate here would make genuinely random IDs
++            # look more predictable than they are.
++            if self.use_miller_madow:
++                entropies = [MathCore.miller_madow_entropy(str(s)) for s in sample_ids]
++            else:
++                entropies = [MathCore.shannon_entropy(str(s)) for s in sample_ids]
+             avg_entropy = sum(entropies) / len(entropies)
+             norm_entropies = [MathCore.normalized_entropy(str(s)) for s in sample_ids]
+             avg_norm = sum(norm_entropies) / len(norm_entropies)
+@@ -107,6 +134,7 @@ class PredictableResourceIDRule(BaseAuditRule):
+             metrics["avg_entropy_bits"] = round(avg_entropy, 3)
+             metrics["avg_normalized_entropy"] = round(avg_norm, 3)
+             metrics["entropy_threshold"] = self.entropy_threshold
++            metrics["estimator"] = "miller_madow" if self.use_miller_madow else "plugin"
+             if low_entropy:
+                 triggered_by.append("low_entropy")
+             triggered = highly_sequential or low_entropy
+diff --git a/entropica_audit_engine/tests/test_bola.py b/entropica_audit_engine/tests/test_bola.py
+index 72a3f97..d5d9d76 100644
+--- a/entropica_audit_engine/tests/test_bola.py
++++ b/entropica_audit_engine/tests/test_bola.py
+@@ -76,3 +76,50 @@ class TestNonNumericIDs:
+         assert finding is not None
+         assert "low_entropy" in finding.metrics["triggered_by"]
+         assert finding.evidence["id_scheme"] == "non-numeric"
++
++
++class TestEstimatorChoice:
++    """
++    BOLA is the rule most likely to run on small samples (n=5-50), which is
++    exactly the regime where the plugin entropy estimator is negatively
++    biased (see MathCore.miller_madow_entropy). These tests pin down that
++    Miller-Madow is actually used by default here, not just in
++    ExcessiveDataExposureRule — a prior version silently used the plugin
++    estimator in this rule while the newer rule had already switched.
++    """
++
++    def test_miller_madow_is_default_and_recorded_in_metrics(self):
++        rule = PredictableResourceIDRule()
++        assert rule.use_miller_madow is True
++        ids = ["aaaa1", "aaaa2", "aaaa3", "aaaa4", "aaaa5"]
++        finding = run(rule.execute("https://api.example.com/sessions/{id}", sample_ids=ids))
++        assert finding is not None
++        assert finding.metrics["estimator"] == "miller_madow"
++
++    def test_miller_madow_entropy_is_not_less_than_plugin_entropy(self):
++        # Miller-Madow adds a non-negative correction term, so on the same
++        # small sample it should never score *below* the plugin estimate
++        # (never make the rule falsely more alarmed than the biased version).
++        rule_mm = PredictableResourceIDRule(use_miller_madow=True)
++        rule_plugin = PredictableResourceIDRule(use_miller_madow=False)
++        ids = ["ab1c9", "9fa2b", "c3d8e", "1e4f7", "b2a6d"]
++        finding_mm = run(rule_mm.execute("https://api.example.com/sessions/{id}", sample_ids=ids))
++        finding_plugin = run(rule_plugin.execute("https://api.example.com/sessions/{id}", sample_ids=ids))
++        mm_entropy = finding_mm.metrics["avg_entropy_bits"] if finding_mm else None
++        plugin_entropy = finding_plugin.metrics["avg_entropy_bits"] if finding_plugin else None
++        assert mm_entropy is not None and plugin_entropy is not None
++        assert mm_entropy >= plugin_entropy
++        assert finding_plugin.metrics["estimator"] == "plugin"
++
++    def test_numeric_finding_carries_keyspace_ci(self):
++        # Small, tightly-clustered numeric IDs -> small_keyspace trigger.
++        # The Finding must carry the 95% CI alongside the point estimate,
++        # not just the bare number (see MathCore.keyspace_bits_ci).
++        rule = PredictableResourceIDRule()
++        ids = [1001, 1002, 1003, 1004, 1005, 1006]
++        finding = run(rule.execute("https://api.example.com/orders/{id}", sample_ids=ids))
++        assert finding is not None
++        assert "keyspace_bits_ci_95" in finding.metrics
++        ci = finding.metrics["keyspace_bits_ci_95"]
++        assert ci["lower"] <= ci["point"] <= ci["upper"]
++        assert ci["point"] == finding.metrics["estimated_keyspace_bits"]
+diff --git a/entropica_audit_engine/tests/test_calibration_generators.py b/entropica_audit_engine/tests/test_calibration_generators.py
+new file mode 100644
+index 0000000..09878e7
+--- /dev/null
++++ b/entropica_audit_engine/tests/test_calibration_generators.py
+@@ -0,0 +1,87 @@
++import uuid
++
++import pytest
++
++from entropica_audit_engine.calibration.generators import GENERATORS
++from entropica_audit_engine.core.math_core import MathCore
++
++
++class TestGeneratorContract:
++    """Every generator must obey the same shape, regardless of scheme."""
++
++    @pytest.mark.parametrize("name", list(GENERATORS.keys()))
++    def test_returns_n_samples_and_valid_label(self, name):
++        gen = GENERATORS[name]
++        samples, label = gen(10, seed=0)
++        assert len(samples) == 10
++        assert label in ("safe", "vulnerable", "mixed")
++
++    @pytest.mark.parametrize("name", list(GENERATORS.keys()))
++    def test_reproducible_given_same_seed(self, name):
++        gen = GENERATORS[name]
++        a, label_a = gen(20, seed=42)
++        b, label_b = gen(20, seed=42)
++        assert a == b
++        assert label_a == label_b
++
++    def test_time_based_schemes_reproducible_across_real_delay(self):
++        """
++        snowflake_like and ulid_like previously built their timestamp
++        component from time.time(), which made
++        test_reproducible_given_same_seed pass by accident — both calls
++        in that test land in the same millisecond, so the bug never
++        showed up there. Sleeping between calls here is what actually
++        exercises the "reproducible" claim.
++        """
++        import time as time_module
++
++        for name in ("snowflake_like", "ulid_like"):
++            gen = GENERATORS[name]
++            a, _ = gen(10, seed=7)
++            time_module.sleep(0.01)
++            b, _ = gen(10, seed=7)
++            assert a == b, f"{name} is not reproducible across a real time delay"
++
++    @pytest.mark.parametrize("name", list(GENERATORS.keys()))
++    def test_different_seeds_differ(self, name):
++        gen = GENERATORS[name]
++        a, _ = gen(20, seed=1)
++        b, _ = gen(20, seed=2)
++        assert a != b
++
++
++class TestLabelSemantics:
++    """Ground-truth labels must actually match what the generator produces —
++    a mislabeled generator would silently corrupt every downstream TP/FP
++    count, so these are checked against MathCore directly, not just
++    against the generator's own docstring claim."""
++
++    def test_auto_increment_is_labeled_vulnerable_and_is_sequential(self):
++        samples, label = GENERATORS["auto_increment"](10, seed=0)
++        assert label == "vulnerable"
++        assert MathCore.sequential_score(samples) == 1.0
++
++    def test_large_random_int_is_labeled_safe_and_has_large_keyspace(self):
++        samples, label = GENERATORS["large_random_int"](10, seed=0)
++        assert label == "safe"
++        bits = MathCore.estimated_keyspace_bits(samples)
++        assert bits is not None and bits > 32.0
++
++    def test_uuidv4_produces_valid_uuids(self):
++        samples, label = GENERATORS["uuidv4"](10, seed=0)
++        assert label == "safe"
++        for s in samples:
++            parsed = uuid.UUID(s)
++            assert parsed.version == 4
++
++    def test_predictable_session_token_is_low_entropy(self):
++        samples, label = GENERATORS["predictable_session_token"](10, seed=0)
++        assert label == "vulnerable"
++        avg = sum(MathCore.miller_madow_entropy(str(s)) for s in samples) / len(samples)
++        assert avg < 3.0
++
++    def test_snowflake_and_ulid_are_mixed_not_binary(self):
++        _, snowflake_label = GENERATORS["snowflake_like"](10, seed=0)
++        _, ulid_label = GENERATORS["ulid_like"](10, seed=0)
++        assert snowflake_label == "mixed"
++        assert ulid_label == "mixed"
+diff --git a/entropica_audit_engine/tests/test_calibration_harness.py b/entropica_audit_engine/tests/test_calibration_harness.py
+new file mode 100644
+index 0000000..99ec3ce
+--- /dev/null
++++ b/entropica_audit_engine/tests/test_calibration_harness.py
+@@ -0,0 +1,145 @@
++import tempfile
++from pathlib import Path
++
++import pytest
++
++from entropica_audit_engine.calibration.generators import GENERATORS
++from entropica_audit_engine.calibration.harness import (
++    CalibrationRecord,
++    collect,
++    confusion,
++    decisive_signal_counts,
++    load_jsonl,
++    records_from_samples,
++    save_jsonl,
++    scheme_summary,
++    sweep,
++    would_trigger,
++)
++
++
++class TestRecordsFromSamples:
++    def test_numeric_scheme_populates_keyspace_fields(self):
++        samples, label = GENERATORS["auto_increment"](10, seed=0)
++        r = records_from_samples("auto_increment", samples, label, seed=0)
++        assert r.id_type == "numeric"
++        assert r.estimated_keyspace_bits is not None
++        assert r.keyspace_ci_lower is not None
++        assert r.avg_entropy_mm is None
++
++    def test_non_numeric_scheme_populates_entropy_fields(self):
++        samples, label = GENERATORS["uuidv4"](10, seed=0)
++        r = records_from_samples("uuidv4", samples, label, seed=0)
++        assert r.id_type == "non-numeric"
++        assert r.avg_entropy_mm is not None
++        assert r.avg_entropy_plugin is not None
++        assert r.estimated_keyspace_bits is None
++
++    def test_mm_entropy_is_never_below_plugin_on_same_sample(self):
++        samples, label = GENERATORS["base62_token"](8, seed=3)
++        r = records_from_samples("base62_token", samples, label, seed=3)
++        assert r.avg_entropy_mm >= r.avg_entropy_plugin
++
++
++class TestCollect:
++    def test_collect_covers_every_generator_size_and_seed(self):
++        records = collect(sample_sizes=(5, 10), seeds=(0, 1))
++        assert len(records) == len(GENERATORS) * 2 * 2
++        schemes = {r.scheme for r in records}
++        assert schemes == set(GENERATORS.keys())
++
++
++class TestPersistence:
++    def test_save_and_load_round_trip(self):
++        records = collect(sample_sizes=(5,), seeds=(0,))
++        with tempfile.TemporaryDirectory() as d:
++            path = str(Path(d) / "records.jsonl")
++            save_jsonl(records, path)
++            loaded = load_jsonl(path)
++        assert len(loaded) == len(records)
++        assert loaded[0] == records[0]
++
++
++class TestWouldTrigger:
++    def test_vulnerable_auto_increment_triggers_at_default_thresholds(self):
++        samples, label = GENERATORS["auto_increment"](10, seed=0)
++        r = records_from_samples("auto_increment", samples, label, seed=0)
++        triggered, signals = would_trigger(r)
++        assert triggered is True
++        assert "highly_sequential" in signals
++
++    def test_safe_uuid_does_not_trigger_at_default_thresholds(self):
++        samples, label = GENERATORS["uuidv4"](20, seed=0)
++        r = records_from_samples("uuidv4", samples, label, seed=0)
++        triggered, _ = would_trigger(r)
++        assert triggered is False
++
++    def test_use_mm_false_falls_back_to_plugin_entropy(self):
++        samples, label = GENERATORS["predictable_session_token"](10, seed=0)
++        r = records_from_samples("predictable_session_token", samples, label, seed=0)
++        _, signals_mm = would_trigger(r, use_mm=True)
++        _, signals_plugin = would_trigger(r, use_mm=False)
++        # Both should flag low_entropy here (token is very repetitive either
++        # way) — this just confirms the flag actually switches which stored
++        # field gets read, not that outcomes always differ.
++        assert "low_entropy" in signals_mm
++        assert "low_entropy" in signals_plugin
++
++
++class TestConfusionAndSweep:
++    def test_confusion_excludes_mixed_and_unknown(self):
++        records = [
++            CalibrationRecord(
++                scheme="x", label="mixed", n=5, seed=0, id_type="numeric",
++                sequential_score=1.0, estimated_keyspace_bits=10.0,
++            ),
++            CalibrationRecord(
++                scheme="y", label="unknown", n=5, seed=0, id_type="numeric",
++                sequential_score=1.0, estimated_keyspace_bits=10.0,
++            ),
++        ]
++        c = confusion(records)
++        assert c.tp == c.fp == c.tn == c.fn == 0
++        assert c.excluded_mixed == 1
++        assert c.excluded_unknown == 1
++
++    def test_confusion_counts_tp_and_tn_on_clear_cases(self):
++        records = collect(sample_sizes=(20,), seeds=(0, 1, 2))
++        c = confusion(records)
++        # auto_increment (vulnerable) and uuidv4 (safe) are unambiguous
++        # regardless of threshold — at minimum both classes should be
++        # represented once thresholds are at rule defaults.
++        assert c.tp > 0
++        assert c.tn > 0
++
++    def test_sweep_raising_entropy_threshold_never_decreases_tpr(self):
++        records = collect(sample_sizes=(20,), seeds=(0, 1, 2))
++        rows = sweep(records, "entropy_threshold", [1.0, 2.0, 3.0, 4.0, 5.0])
++        tprs = [r["tpr"] for r in rows if r["tpr"] is not None]
++        # Raising the entropy threshold only ever flags MORE things as
++        # low-entropy, so true-positive rate is monotonically non-decreasing.
++        assert tprs == sorted(tprs)
++
++    def test_sweep_raising_entropy_threshold_never_decreases_fpr(self):
++        records = collect(sample_sizes=(20,), seeds=(0, 1, 2))
++        rows = sweep(records, "entropy_threshold", [1.0, 2.0, 3.0, 4.0, 5.0])
++        fprs = [r["fpr"] for r in rows if r["fpr"] is not None]
++        assert fprs == sorted(fprs)
++
++
++class TestDecisiveSignalCounts:
++    def test_counts_only_vulnerable_records(self):
++        records = collect(sample_sizes=(20,), seeds=(0,))
++        counts = decisive_signal_counts(records)
++        assert sum(counts.values()) > 0
++        assert set(counts.keys()) <= {"highly_sequential", "small_keyspace", "low_entropy"}
++
++
++class TestSchemeSummary:
++    def test_every_scheme_with_data_appears(self):
++        records = collect(sample_sizes=(20,), seeds=(0, 1))
++        rows = scheme_summary(records)
++        schemes = {row["scheme"] for row in rows}
++        assert schemes == set(GENERATORS.keys())
++        for row in rows:
++            assert row["min"] <= row["median"] <= row["max"]
+diff --git a/entropica_audit_engine/tests/test_explain.py b/entropica_audit_engine/tests/test_explain.py
+new file mode 100644
+index 0000000..e54a296
+--- /dev/null
++++ b/entropica_audit_engine/tests/test_explain.py
+@@ -0,0 +1,170 @@
++"""
++Tests for the explainability layer (explain.py).
++
++These deliberately check for the presence of the actual numbers from
++each Finding's metrics dict, not exact wording — the point is that the
++text is a faithful, non-fabricating rendering of what's already on the
++Finding, not a specific sentence shape.
++"""
++
++import asyncio
++
++import pytest
++
++from entropica_audit_engine.explain import explain, explain_all
++from entropica_audit_engine.rules.base import Finding, Severity
++from entropica_audit_engine.rules.bola import PredictableResourceIDRule
++from entropica_audit_engine.rules.excessive_data import ExcessiveDataExposureRule
++from entropica_audit_engine.rules.mass_assignment import MassAssignmentRule
++from entropica_audit_engine.rules.resource_consumption import (
++    UnrestrictedResourceConsumptionRule,
++)
++
++
++def run(coro):
++    return asyncio.run(coro)
++
++
++class TestExplainBOLA:
++    def test_numeric_finding_mentions_bits_and_range(self):
++        rule = PredictableResourceIDRule()
++        ids = [1001, 1002, 1003, 1004, 1005, 1006]
++        finding = run(rule.execute("https://api.example.com/orders/{id}", sample_ids=ids))
++        text = explain(finding)
++        point = finding.metrics["estimated_keyspace_bits"]
++        ci = finding.metrics["keyspace_bits_ci_95"]
++        assert str(point) in text
++        assert str(ci["lower"]) in text
++        assert str(ci["upper"]) in text
++        assert "enumerable" in text
++        assert "BOLA" in text
++
++    def test_non_numeric_finding_mentions_entropy_and_estimator(self):
++        rule = PredictableResourceIDRule()
++        ids = ["aaaa1", "aaaa2", "aaaa3", "aaaa4", "aaaa5"]
++        finding = run(rule.execute("https://api.example.com/sessions/{id}", sample_ids=ids))
++        text = explain(finding)
++        assert str(finding.metrics["avg_entropy_bits"]) in text
++        assert "Miller" in text  # estimator == miller_madow by default
++        assert "BOLA" in text
++
++    def test_plugin_estimator_labeled_differently(self):
++        rule = PredictableResourceIDRule(use_miller_madow=False)
++        ids = ["aaaa1", "aaaa2", "aaaa3", "aaaa4", "aaaa5"]
++        finding = run(rule.execute("https://api.example.com/sessions/{id}", sample_ids=ids))
++        text = explain(finding)
++        assert "Miller" not in text
++        assert "plugin" in text
++
++    def test_custom_probe_rate_changes_enumeration_estimate(self):
++        rule = PredictableResourceIDRule()
++        ids = [1001, 1002, 1003, 1004, 1005, 1006]
++        finding = run(rule.execute("https://api.example.com/orders/{id}", sample_ids=ids))
++        slow_text = explain(finding, rate_rps=1.0)
++        fast_text = explain(finding, rate_rps=10_000.0)
++        assert slow_text != fast_text
++        assert "1 req/s" in slow_text
++        assert "10000 req/s" in fast_text
++
++
++class TestExplainExcessiveData:
++    def test_single_field_names_the_field(self):
++        rule = ExcessiveDataExposureRule()
++        values = [1001, 1002, 1003, 1004, 1005]
++        finding = run(
++            rule.execute("https://api.example.com/users", sample_values=values)
++        )
++        text = explain(finding)
++        assert "`value`" in text
++
++    def test_aggregate_finding_lists_every_offender(self):
++        rule = ExcessiveDataExposureRule()
++        field_samples = {
++            "internal_id": [1001, 1002, 1003, 1004, 1005],
++            "session_token": ["aaaa1", "aaaa2", "aaaa3", "aaaa4"],
++            "display_name": ["Alice Smith", "Bob Jones", "Carla Diaz", "Deb Chen"],
++        }
++        finding = run(
++            rule.execute("https://api.example.com/profile", field_samples=field_samples)
++        )
++        assert finding is not None
++        text = explain(finding)
++        assert "`internal_id`" in text
++        assert "`session_token`" in text
++        assert "display_name" not in text  # high-entropy names shouldn't trigger
++
++
++class TestExplainResourceConsumption:
++    def test_queue_overload_mentions_both_numbers(self):
++        rule = UnrestrictedResourceConsumptionRule(drain_rate=5.0, queue_threshold=10.0)
++        samples = [(float(i), 50.0) for i in range(10)]
++        finding = run(
++            rule.execute("https://api.example.com/search", rate_samples=samples)
++        )
++        assert finding is not None
++        text = explain(finding)
++        assert str(finding.metrics["max_queue_length"]) in text
++        assert str(finding.metrics["queue_threshold"]) in text
++        assert "rate limiting" in text
++
++
++class TestExplainMassAssignment:
++    def test_write_only_fields_are_named(self):
++        rule = MassAssignmentRule()
++        finding = run(
++            rule.execute(
++                "https://api.example.com/account",
++                read_fields=["id", "email", "displayName"],
++                write_fields=["id", "email", "displayName", "role", "accountBalance"],
++            )
++        )
++        assert finding is not None
++        # Jaccard here is 3/5 = 0.6, above the 0.5 threshold — only the
++        # write_only_fields signal triggers, so the jaccard clause is
++        # correctly omitted rather than mentioned as if it contributed.
++        assert "low_field_overlap" not in finding.metrics["triggered_by"]
++        text = explain(finding)
++        assert "`role`" in text
++        assert "`accountBalance`" in text
++
++    def test_low_overlap_finding_mentions_jaccard_index(self):
++        rule = MassAssignmentRule()
++        finding = run(
++            rule.execute(
++                "https://api.example.com/account",
++                read_fields=["id", "email"],
++                write_fields=["role", "accountBalance", "isAdmin"],
++            )
++        )
++        assert finding is not None
++        assert "low_field_overlap" in finding.metrics["triggered_by"]
++        text = explain(finding)
++        assert str(finding.metrics["jaccard_index"]) in text
++
++
++class TestExplainGenericFallback:
++    def test_unknown_rule_id_still_produces_text(self):
++        finding = Finding(
++            rule_id="API9:2099",
++            name="Hypothetical Future Rule",
++            severity=Severity.LOW,
++            description="A rule that doesn't exist yet raised this Finding.",
++            metrics={"triggered_by": ["something_new"]},
++        )
++        text = explain(finding)
++        assert text  # non-empty, doesn't raise
++        assert "something_new" in text
++
++
++class TestExplainAll:
++    def test_explain_all_keys_by_rule_and_target(self):
++        rule = MassAssignmentRule()
++        finding = run(
++            rule.execute(
++                "https://api.example.com/account",
++                read_fields=["id"],
++                write_fields=["id", "role"],
++            )
++        )
++        result = explain_all([finding])
++        assert f"API6:2023:https://api.example.com/account" in result
+diff --git a/entropica_audit_engine/tests/test_math_core.py b/entropica_audit_engine/tests/test_math_core.py
+index 39fbabc..8c71de4 100644
+--- a/entropica_audit_engine/tests/test_math_core.py
++++ b/entropica_audit_engine/tests/test_math_core.py
+@@ -122,6 +122,83 @@ class TestQueueDynamics:
+         assert q.Q == 0.0
+ 
+ 
++class TestOnlineDrainRateEstimation:
++    """
++    Section 3 of the project notes ("Adaptive Service Rate μ"): μ should
++    be discovered from observed departures while the queue is non-empty,
++    not held fixed at the constructor's initial guess forever.
++    """
++
++    def test_mu_unchanged_before_min_samples(self):
++        q = QueueDynamicsTracker(drain_rate=10.0, min_departures_before_adapting=5)
++        q.update(0.0, lambda_rate=50.0)
++        q.update(1.0, lambda_rate=50.0)  # two calls needed: first only seeds last_t
++        assert q.Q > 0
++        # Only 2 in-queue departures — below the min sample count.
++        q.record_departure(1.1)
++        q.record_departure(1.2)
++        assert q.mu == 10.0
++        assert q.mu_is_adapted is False
++
++    def test_mu_adapts_after_min_samples_while_queue_nonempty(self):
++        q = QueueDynamicsTracker(
++            drain_rate=10.0, mu_learning_rate=0.5, min_departures_before_adapting=3
++        )
++        q.update(0.0, lambda_rate=50.0)
++        q.update(1.0, lambda_rate=50.0)  # force Q > 0 so departures count
++        assert q.Q > 0
++        # Departures every 0.5s -> true rate is 2 req/s, far from the
++        # initial guess of 10.0.
++        t = 1.0
++        for _ in range(6):
++            t += 0.5
++            q.record_departure(t)
++        assert q.mu_is_adapted is True
++        assert q.mu != 10.0
++        assert q.mu == pytest.approx(2.0, rel=0.3)
++
++    def test_departures_while_queue_empty_do_not_move_mu(self):
++        # Q starts at 0 and nothing forces it up — departures here reflect
++        # arrival spacing, not server capacity, and must NOT be used.
++        q = QueueDynamicsTracker(
++            drain_rate=10.0, mu_learning_rate=0.5, min_departures_before_adapting=2
++        )
++        assert q.Q == 0.0
++        t = 0.0
++        for _ in range(6):
++            t += 0.01  # very fast departures, would imply ~100 req/s if used
++            q.record_departure(t)
++        assert q.mu == 10.0  # untouched
++        assert q.mu_sample_count == 0
++
++    def test_mu_floored_above_zero(self):
++        q = QueueDynamicsTracker(
++            drain_rate=10.0, mu_learning_rate=1.0, min_departures_before_adapting=1
++        )
++        q.update(0.0, lambda_rate=50.0)
++        q.update(1.0, lambda_rate=50.0)
++        assert q.Q > 0
++        q.record_departure(1.0)
++        # Enormous gap -> tiny instantaneous rate; must not collapse to
++        # ~0 (which would make Q grow without bound regardless of λ).
++        q.record_departure(10_000.0)
++        assert q.mu > 0.0
++
++    def test_reset_restores_initial_mu_and_adaptation_state(self):
++        q = QueueDynamicsTracker(drain_rate=7.5, mu_learning_rate=0.5, min_departures_before_adapting=2)
++        q.update(0.0, lambda_rate=50.0)
++        q.update(1.0, lambda_rate=50.0)
++        t = 1.0
++        for _ in range(5):
++            t += 0.5
++            q.record_departure(t)
++        assert q.mu != 7.5
++        q.reset()
++        assert q.mu == 7.5
++        assert q.mu_is_adapted is False
++        assert q.mu_sample_count == 0
++
++
+ class TestAcceleration:
+     def test_rising_rate(self):
+         acc = AccelerationTracker(window=5)
+diff --git a/entropica_audit_engine/tests/test_prober.py b/entropica_audit_engine/tests/test_prober.py
+index 7bfb7cc..8f97473 100644
+--- a/entropica_audit_engine/tests/test_prober.py
++++ b/entropica_audit_engine/tests/test_prober.py
+@@ -97,3 +97,59 @@ class TestProbeMany:
+ 
+         assert len(session.latencies_ms) == 3
+         assert all(latency >= 0 for latency in session.latencies_ms)
++
++
++class TestDrainRateAdaptation:
++    """
++    Confirms probe_one actually feeds real completions into
++    QueueDynamicsTracker.record_departure. Previously the prober's own
++    docstring claimed mu was "refined as responses come back" via a
++    method that didn't exist anywhere in the codebase — mu was set once
++    from initial_drain_rate and never touched again, no matter how many
++    requests completed. These tests would have caught that: before the
++    fix, mu_sample_count stays 0 and mu_is_adapted stays False forever,
++    regardless of how much traffic the prober observes.
++    """
++
++    def test_completions_are_recorded_as_departures_when_queue_backlogged(self):
++        urls = [f"https://api.example.com/items/{i}" for i in range(6)]
++        responses = {u: (200, {"ok": True}) for u in urls}
++        transport = httpx.MockTransport(make_handler(responses))
++        prober = PatchedProber(
++            transport,
++            max_concurrency=6,
++            queue_backoff_threshold=1000.0,  # don't actually throttle
++            initial_drain_rate=5.0,
++        )
++        # Force a backlog before probing so departures count toward mu
++        # (see QueueDynamicsTracker.record_departure — Q==0 departures
++        # are deliberately excluded and wouldn't prove the wiring works).
++        prober._queue_model.Q = 100.0
++        prober._queue_model.min_departures_before_adapting = 1
++
++        run(prober.probe_many(urls))
++
++        assert prober._queue_model.mu_sample_count >= 1
++        assert prober.mu_is_adapted is True
++        assert prober.drain_rate_estimate > 0.0
++
++    def test_mu_stays_at_initial_guess_when_never_backlogged(self):
++        # Sanity check on the other direction: with no forced backlog and
++        # a generous initial_drain_rate relative to a handful of fast
++        # mock requests, the queue model shouldn't have reason to think
++        # it's ever behind, so mu should reasonably remain unadapted or
++        # close to its guess rather than swinging on noise.
++        urls = [f"https://api.example.com/items/{i}" for i in range(3)]
++        responses = {u: (200, {"ok": True}) for u in urls}
++        transport = httpx.MockTransport(make_handler(responses))
++        prober = PatchedProber(
++            transport,
++            max_concurrency=3,
++            queue_backoff_threshold=1000.0,
++            initial_drain_rate=5.0,
++        )
++        run(prober.probe_many(urls))
++        # Either it never adapted, or it adapted from genuinely-observed
++        # in-queue departures — either way mu must stay a finite positive
++        # number, never 0 or negative.
++        assert prober.drain_rate_estimate > 0.0
+diff --git a/entropica_audit_engine/worker/prober.py b/entropica_audit_engine/worker/prober.py
+index 211a045..c1fd3d6 100644
+--- a/entropica_audit_engine/worker/prober.py
++++ b/entropica_audit_engine/worker/prober.py
+@@ -10,8 +10,18 @@ used by rules/resource_consumption.py to *detect* overload in a target.
+ Instead of a fixed "N requests per second" ceiling, the prober tracks its
+ own modelled queue length against the target and backs off exactly when
+ Q(t) would start growing — i.e. it uses its own detection math to avoid
+-becoming the attacker it's built to find. This also means a target's
+-observed drain rate (μ) is discovered empirically rather than guessed.
++becoming the attacker it's built to find.
++
++The target's drain rate (μ) starts from a guess (`initial_drain_rate`)
++and is then refined online from real response timing: every completed
++request is recorded as a departure via
++`QueueDynamicsTracker.record_departure`, which maintains an EWMA of the
++observed completion rate for departures that occur while the modelled
++queue is non-empty (see that method's docstring for why only those
++departures count). Until `min_departures_before_adapting` such samples
++have been observed, μ stays at the initial guess — `mu_is_adapted` /
++`drain_rate_estimate` on the tracker expose whether the current value is
++still that guess or has actually been learned.
+ """
+ 
+ from __future__ import annotations
+@@ -62,7 +72,9 @@ class AsyncProber:
+         not the primary throttle.
+     initial_drain_rate : float
+         Starting estimate of the target's requests/sec capacity (μ).
+-        Refined as responses come back (see `_update_drain_estimate`).
++        Refined online as real responses come back — see
++        `QueueDynamicsTracker.record_departure`, called from `probe_one`
++        on every completion.
+     queue_backoff_threshold : float
+         When the modelled queue length exceeds this, the prober pauses
+         new requests until it drains — this is the self-governance loop.
+@@ -112,8 +124,10 @@ class AsyncProber:
+             t0 = time.monotonic()
+             try:
+                 resp = await client.get(url, timeout=self.request_timeout)
+-                latency_ms = (time.monotonic() - t0) * 1000.0
++                completion_t = time.monotonic()
++                latency_ms = (completion_t - t0) * 1000.0
+                 self._completed_count += 1
++                self._queue_model.record_departure(completion_t)
+                 z = self._latency_tracker.update(latency_ms)
+                 self._anomaly_tracker.update(z)
+                 body: Any = None
+@@ -128,8 +142,10 @@ class AsyncProber:
+                     body=body,
+                 )
+             except httpx.HTTPError as exc:
+-                latency_ms = (time.monotonic() - t0) * 1000.0
++                completion_t = time.monotonic()
++                latency_ms = (completion_t - t0) * 1000.0
+                 self._completed_count += 1
++                self._queue_model.record_departure(completion_t)
+                 return ProbeResult(
+                     url=url, status_code=None, latency_ms=latency_ms, error=str(exc)
+                 )
+@@ -170,3 +186,16 @@ class AsyncProber:
+     @property
+     def queue_snapshot(self) -> float:
+         return self._queue_model.Q
++
++    @property
++    def drain_rate_estimate(self) -> float:
++        """Current μ — either still the initial guess, or the online EWMA
++        estimate once enough in-queue departures have been observed
++        (see `mu_is_adapted`)."""
++        return self._queue_model.mu
++
++    @property
++    def mu_is_adapted(self) -> bool:
++        """True once drain_rate_estimate reflects observed departures
++        rather than the constructor's initial_drain_rate guess."""
++        return self._queue_model.mu_is_adapted

@@ -34,14 +34,40 @@ class QueueDynamicsTracker:
     faster than the server can drain it.
     """
 
-    def __init__(self, drain_rate: float = 10.0) -> None:
+    def __init__(
+        self,
+        drain_rate: float = 10.0,
+        mu_learning_rate: float = 0.2,
+        min_departures_before_adapting: int = 5,
+    ) -> None:
         """
-        drain_rate (μ): estimated requests the backend can process per second.
+        drain_rate (μ): starting estimate of requests the backend can
+        process per second. Refined online by `record_departure` once
+        enough in-queue departures have been observed (see below) —
+        this is the *initial guess*, not a fixed value for the tracker's
+        lifetime.
+
+        mu_learning_rate : EWMA smoothing factor (0-1) applied to each
+            new inter-departure-rate sample. Higher = adapts faster but
+            noisier; lower = smoother but slower to react to a real
+            capacity change.
+        min_departures_before_adapting : number of in-queue departure
+            samples required before the EWMA is trusted over the initial
+            guess. Guards against a single lucky/unlucky gap swinging μ
+            (and therefore Q) around on almost no evidence.
         """
         self.mu = drain_rate
+        self._initial_mu = drain_rate
         self.Q: float = 0.0
         self.last_t: Optional[float] = None
         self.history: Deque[QueueSnapshot] = deque(maxlen=1000)
+
+        # --- online μ (drain-rate) estimation state ---
+        self.mu_learning_rate = mu_learning_rate
+        self.min_departures_before_adapting = min_departures_before_adapting
+        self._last_departure_t: Optional[float] = None
+        self._mu_ewma: Optional[float] = None
+        self.mu_sample_count: int = 0
 
     def update(self, t: float, lambda_rate: float) -> float:
         """
@@ -72,10 +98,64 @@ class QueueDynamicsTracker:
         """Simple overload signal when queue grows beyond threshold."""
         return self.Q >= threshold
 
+    def record_departure(self, t: float) -> None:
+        """
+        Record an actual observed completion ("departure") at time t —
+        e.g. an HTTP response actually came back, as opposed to the
+        modelled arrivals fed to `update()`.
+
+        Project notes, section 3 ("Adaptive Service Rate μ"): "when the
+        modelled queue is non-empty, departures reveal capacity. Simple
+        approach: exponentially weighted estimate of completion rate
+        while Q > 0."
+
+        While self.Q > 0 — the model currently believes arrivals are
+        outpacing drain — the actual gap since the last departure is
+        evidence of the real service rate:
+
+            μ̂_k = α · (1 / Δt_departure) + (1 − α) · μ̂_{k−1}
+
+        Departures observed while Q == 0 still update the timing
+        baseline (so the next in-queue gap is measured correctly) but do
+        NOT feed the estimate: with no backlog, inter-departure spacing
+        reflects arrival spacing, not the server's true capacity — using
+        it would bias μ toward whatever rate the prober happens to be
+        issuing requests at, not what the target can actually absorb.
+
+        `self.mu` is only overwritten once `min_departures_before_adapting`
+        in-queue samples have accumulated, and is floored at a small
+        positive value — an estimate that collapsed to ~0 would make Q
+        grow without bound on the next `update()` call regardless of the
+        true arrival rate.
+        """
+        if self._last_departure_t is not None and self.Q > 0:
+            dt = t - self._last_departure_t
+            if dt > 1e-6:
+                instantaneous_rate = 1.0 / dt
+                if self._mu_ewma is None:
+                    self._mu_ewma = instantaneous_rate
+                else:
+                    a = self.mu_learning_rate
+                    self._mu_ewma = a * instantaneous_rate + (1 - a) * self._mu_ewma
+                self.mu_sample_count += 1
+                if self.mu_sample_count >= self.min_departures_before_adapting:
+                    self.mu = max(0.1, self._mu_ewma)
+
+        self._last_departure_t = t
+
+    @property
+    def mu_is_adapted(self) -> bool:
+        """True once μ reflects observed departures rather than the initial guess."""
+        return self.mu_sample_count >= self.min_departures_before_adapting
+
     def reset(self) -> None:
         self.Q = 0.0
         self.last_t = None
         self.history.clear()
+        self.mu = self._initial_mu
+        self._last_departure_t = None
+        self._mu_ewma = None
+        self.mu_sample_count = 0
 
 
 class AccelerationTracker:
