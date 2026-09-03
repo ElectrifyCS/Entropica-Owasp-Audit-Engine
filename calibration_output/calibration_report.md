@@ -1,9 +1,9 @@
 # ENTROPICA Calibration Report (synthetic pass)
 
-**Scope**: synthetic generators only (see `calibration/generators.py`). This is NOT the real/realistic-traffic pass the project notes call MANDATORY (OWASP crAPI, VAmPI, public APIs, staging) â€” that still needs to be run separately, from an environment with network access to those targets, and appended to this same record format.
+**Scope**: synthetic generators only (see `calibration/generators.py`). This is NOT the real/realistic-traffic pass the project notes call MANDATORY (OWASP crAPI, VAmPI, public APIs, staging) — that still needs to be run separately, from an environment with network access to those targets, and appended to this same record format.
 
-Total records: 135
-By label: {'vulnerable': 45, 'safe': 60, 'mixed': 30}
+Total records: 137
+By label: {'vulnerable': 45, 'safe': 60, 'mixed': 30, 'unknown': 2}
 
 ## Per-scheme summary (at rule-default thresholds' native units)
 
@@ -18,6 +18,8 @@ By label: {'vulnerable': 45, 'safe': 60, 'mixed': 30}
 | snowflake_like | mixed | numeric | keyspace_bits | 15 | 22.58 | 24.14 | 24.46 | 26.61 | 26.61 |
 | ulid_like | mixed | non-numeric | entropy_bits_mm | 15 | 4.49 | 4.56 | 4.57 | 4.62 | 4.65 |
 | uuidv4 | safe | non-numeric | entropy_bits_mm | 15 | 3.95 | 3.98 | 3.99 | 4.03 | 4.07 |
+| vampi_book_title_live | unknown | non-numeric | entropy_bits_mm | 1 | 3.87 | 3.87 | 3.87 | 3.87 | 3.87 |
+| vampi_username_live | unknown | non-numeric | entropy_bits_mm | 1 | 3.96 | 3.96 | 3.96 | 3.96 | 3.96 |
 
 ## Entropy threshold sweep (non-numeric schemes)
 
@@ -32,7 +34,7 @@ By label: {'vulnerable': 45, 'safe': 60, 'mixed': 30}
 | 4.5 | 45 | 45 | 15 | 0 | 1.000 | 0.750 | 0.500 | 0.250 |
 | 5.0 | 45 | 45 | 15 | 0 | 1.000 | 0.750 | 0.500 | 0.250 |
 
-Highest Youden's J on this synthetic set: `entropy_threshold=3.0` (current rule default: 3.0). Advisory only â€” not applied automatically.
+Highest Youden's J on this synthetic set: `entropy_threshold=3.0` (current rule default: 3.0). Advisory only — not applied automatically.
 
 ## Keyspace-bits threshold sweep (numeric schemes)
 
@@ -48,7 +50,7 @@ Highest Youden's J on this synthetic set: `entropy_threshold=3.0` (current rule 
 | 36 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
 | 40 | 45 | 0 | 60 | 0 | 1.000 | 0.000 | 1.000 | 1.000 |
 
-Highest Youden's J on this synthetic set: `keyspace_bit_threshold=16` (current rule default: 32.0). Advisory only â€” not applied automatically.
+Highest Youden's J on this synthetic set: `keyspace_bit_threshold=16` (current rule default: 32.0). Advisory only — not applied automatically.
 
 ## Decisive-signal counts (among vulnerable-labeled records, at rule defaults)
 
@@ -58,5 +60,5 @@ Highest Youden's J on this synthetic set: `keyspace_bit_threshold=16` (current r
 
 ## Miller-Madow correction size (mean bits added vs. plugin estimator)
 
-Mean: 0.4008 bits over 75 records.
-At n<=10 specifically: mean 0.4041 bits over 30 records â€” the small-sample regime section 2.1 of the notes calls out as where the correction matters most.
+Mean: 0.4056 bits over 77 records.
+At n<=10 specifically: mean 0.4101 bits over 31 records — the small-sample regime section 2.1 of the notes calls out as where the correction matters most.

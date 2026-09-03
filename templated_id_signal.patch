@@ -1,0 +1,408 @@
+diff --git a/COMMERCIAL_READINESS_CHECKLIST.md b/COMMERCIAL_READINESS_CHECKLIST.md
+new file mode 100644
+index 0000000..9d3da26
+--- /dev/null
++++ b/COMMERCIAL_READINESS_CHECKLIST.md
+@@ -0,0 +1,77 @@
++# Entropica — Commercial Readiness Checklist
++
++Quick, practical list to move from research prototype → sellable product.
++Items are ordered roughly by impact / dependency. Mark progress as you go.
++
++---
++
++## 1. Core technical credibility (must-have before any sales conversation)
++
++- [x] **Structural signal for templated IDs** (prefix + varying-suffix entropy)  
++  Closed the exact blind spot real VAmPI data exposed. Metrics + explain layer + tests shipped.
++- [ ] **Clean real-traffic methodology**  
++  Separate organic target data from any script-injected samples. Label contaminated records clearly or drop them. Credibility is zero if a reviewer spots 93 % self-generated usernames.
++- [ ] **Demonstrate catching a known vulnerability end-to-end**  
++  VAmPI BOLA (username swap) and/or crAPI SSRF. Not just “calibration looks good” — show the tool would have produced a Finding on the real vulnerable behaviour.
++- [ ] **Threshold policy document**  
++  Synthetic + real-data rationale for every default (entropy 3.0, keyspace 32, sequential 0.7, templated heuristics). “Advisory only” notes stay visible; customers need to understand what they are tuning.
++- [ ] **Regression suite that includes the real-data patterns**  
++  bookTitle-style, short numeric tokens, auto-increment, UUIDv4, base62, contaminated vs clean samples. Keep the synthetic generators; add the real fixtures.
++
++## 2. Product surface (what a paying user actually touches)
++
++- [ ] **Persistent storage** (SQLite is already planned and the store is isolated)  
++  Findings survive process restarts; basic query by target / rule / severity / time.
++- [ ] **Auth on the control plane**  
++  At minimum API-key or basic auth. Do not leave an unauthenticated FastAPI surface on a customer network.
++- [ ] **Stable CLI + versioned HTTP API**  
++  Clear contracts, deprecation policy, semantic versioning. Current demo.py is fine for research; commercial needs a real entry point.
++- [ ] **Human + machine readable reports**  
++  Lean hard on the existing `explain.py` layer. PDF / Markdown / SARIF (or equivalent) export. “Bits and z-scores → language a product owner understands” is a selling point.
++- [ ] **Safe-by-default probing**  
++  Document and enforce the self-governing queue model (μ adaptation, backoff). Explicit rate limits, scope files, dry-run mode, and a clear “you must have permission” statement.
++
++## 3. Packaging, ops & legal hygiene
++
++- [ ] **Proper packaging**  
++  setup.py / pyproject.toml with pinned deps, optional extras, entry points. Version already at 0.2.0 — decide the next public number.
++- [ ] **Documentation that a buyer can evaluate in 15 minutes**  
++  What it detects, what it does *not* detect, how the math works at a high level, how to run a first scan, how to interpret a Finding.
++- [ ] **LICENSE + copyright**  
++  Currently MIT with placeholder “[Your Name]”. Decide final copyright holder and whether commercial use needs a dual-license or commercial addendum.
++- [ ] **Security & privacy posture**  
++  No accidental logging of secrets/tokens, clear data-retention story, no phoning home by default.
++- [ ] **Dependency & supply-chain baseline**  
++  Known vulnerabilities in httpx/fastapi/etc. tracked; lockfile or pinned ranges.
++
++## 4. Commercial model & go-to-market (decide early)
++
++- [ ] **Positioning**  
++  Specialist (best-in-class predictable-ID / BOLA + structural signals) vs broader OWASP API coverage?  
++  Open-core / pure OSS + paid support / fully commercial self-hosted / SaaS?
++- [ ] **Target buyer**  
++  AppSec engineer, product security team, pentester, or platform team embedding the engine?
++- [ ] **Differentiation statement (one paragraph)**  
++  “Mathematical, explainable signals instead of black-box rules or opaque ML. Real traffic revealed gaps synthetic data cannot — and we close them with first-principles math.”
++- [ ] **Pricing & packaging sketch**  
++  Even a rough “community free / pro paid features” outline helps decide which checklist items are free vs paid.
++- [ ] **Support & SLA story**  
++  What happens when a customer opens a ticket about a false positive or a missed templated pattern?
++
++## 5. Validation before first paid pilot
++
++- [ ] At least one external reviewer (friendly AppSec person or researcher) has run it against a known vulnerable app and confirmed Findings make sense.
++- [ ] False-positive rate on a small “known-good” set of modern UUID/token APIs is documented and acceptable.
++- [ ] Capture scripts and calibration harness are reproducible by someone other than you.
++- [ ] README + checklist above are honest about current limitations (no distributed workers yet, SQLite still planned, real-traffic pass still required for final threshold lock-in, etc.).
++
++---
++
++### Suggested next 2-week focus
++1. Finish capture hygiene + real known-vuln demonstration (items in section 1).  
++2. SQLite persistence + basic auth (section 2).  
++3. Write the short differentiation paragraph and decide open-core vs commercial license (section 4).  
++
++Everything else becomes much easier once those three are solid.
++
++*Last updated: 2026-08-31 — after shipping the templated-ID / prefix+suffix structural signal.*
+diff --git a/README.md b/README.md
+index 9017161..8953dde 100644
+--- a/README.md
++++ b/README.md
+@@ -255,7 +255,8 @@ uvicorn entropica_audit_engine.api.app:app --reload
+ | Math core (Welford + EWMA)             | Done      |
+ | Math core (Queue + Acceleration)       | Done      |
+ | Online drain-rate (μ) estimation       | Done      |
+-| BOLA rule (API1)                       | Done      |
++| Math core (templated / prefix+suffix structural signal) | Done |
++| BOLA rule (API1) — includes templated-ID signal | Done |
+ | Excessive Data Exposure rule (API3)    | Done      |
+ | Unrestricted Resource Consumption (API4) | Done    |
+ | Mass Assignment rule (API6)            | Done      |
+@@ -264,12 +265,12 @@ uvicorn entropica_audit_engine.api.app:app --reload
+ | Async HTTP probing worker              | Done      |
+ | FastAPI control plane                  | Done      |
+ | Calibration harness — synthetic pass   | Done      |
+-| Calibration — real/realistic traffic (crAPI, VAmPI, staging) | Not started — needs network access this repo's dev environment doesn't have |
++| Calibration — real/realistic traffic (crAPI, VAmPI, staging) | In progress — synthetic + partial live captures; clean organic samples + known-vuln demonstration still required |
+ | Persistent storage (SQLite)            | Planned   |
+ | Distributed workers (Celery)           | Planned   |
+ | Auth on the control plane              | Planned   |
+ 
+-The mathematical foundations, the active probing layer, a usable control plane, and an explainability layer are all in place now. The calibration harness runs against synthetic data today; running it against real API traffic (crAPI, VAmPI, or a staging target) and folding those records into the same JSONL format is the one item the project notes call MANDATORY that's still open.
++The mathematical foundations, the active probing layer, a usable control plane, an explainability layer, and a structural signal for templated IDs (the exact blind spot real VAmPI book-title samples exposed) are all in place. Next commercial-critical items: clean organic real-traffic samples, end-to-end demonstration against a known vulnerability, and the persistence/auth packaging layer. See `COMMERCIAL_READINESS_CHECKLIST.md`.
+ 
+ ---
+ 
+diff --git a/entropica_audit_engine/core/math_core.py b/entropica_audit_engine/core/math_core.py
+index 05d1401..e6054b0 100644
+--- a/entropica_audit_engine/core/math_core.py
++++ b/entropica_audit_engine/core/math_core.py
+@@ -313,3 +313,116 @@ class MathCore:
+         lower = max(0.0, point - half)
+         upper = point + half
+         return (point, lower, upper)
++
++    # ------------------------------------------------------------------
++    # 5. Structural / templated-ID signal (prefix + varying suffix)
++    # ------------------------------------------------------------------
++    @staticmethod
++    def longest_common_prefix(strings: Sequence[str]) -> str:
++        """
++        Longest common prefix of a sequence of strings.
++
++        Returns the empty string if the sequence is empty or the strings
++        share no common prefix.  Used as the structural signal that pure
++        per-character entropy misses: a fixed, predictable prefix (e.g.
++        "bookTitle") followed by a small varying suffix is highly
++        guessable even when whole-string entropy looks healthy.
++        """
++        if not strings:
++            return ""
++        # Normalise to str and drop empties for the comparison
++        strs = [str(s) for s in strings if str(s)]
++        if not strs:
++            return ""
++        prefix = strs[0]
++        for s in strs[1:]:
++            while not s.startswith(prefix) and prefix:
++                prefix = prefix[:-1]
++            if not prefix:
++                break
++        return prefix
++
++    @staticmethod
++    def templated_id_metrics(
++        ids: Sequence[Union[str, int]],
++        use_miller_madow: bool = True,
++        min_prefix_len: int = 3,
++    ) -> dict:
++        """
++        Detect templated / structurally predictable non-numeric IDs.
++
++        Motivation (real-data finding)
++        ------------------------------
++        Whole-string Shannon / Miller–Madow entropy treats a fixed
++        predictable prefix as character diversity.  Samples such as
++        bookTitle7, bookTitle38, bookTitle17 therefore score in the
++        "safe" range even though an attacker only needs to enumerate a
++        tiny numeric suffix.  This helper isolates the *varying* part:
++
++            1. Compute the longest common prefix (LCP) across the sample.
++            2. Measure entropy only on the suffixes after that prefix.
++            3. Report how large a fraction of each string the fixed
++               prefix occupies.
++
++        A low suffix entropy combined with a non-trivial prefix is a
++        strong structural signal of a templated, guessable ID scheme.
++
++        Returns a dict with (at minimum):
++            common_prefix, prefix_length, avg_suffix_entropy_bits,
++            avg_suffix_normalized_entropy, avg_fixed_fraction,
++            is_templated (bool heuristic), suffixes_preview.
++        """
++        str_ids = [str(s) for s in ids]
++        if len(str_ids) < 2:
++            return {
++                "common_prefix": "",
++                "prefix_length": 0,
++                "avg_suffix_entropy_bits": None,
++                "avg_suffix_normalized_entropy": None,
++                "avg_fixed_fraction": 0.0,
++                "is_templated": False,
++                "suffixes_preview": [],
++            }
++
++        prefix = MathCore.longest_common_prefix(str_ids)
++        plen = len(prefix)
++
++        suffixes = [s[plen:] for s in str_ids]
++        # Empty suffixes (identical strings) → treat as fully fixed / zero entropy
++        entropy_fn = (
++            MathCore.miller_madow_entropy if use_miller_madow else MathCore.shannon_entropy
++        )
++        suffix_entropies = []
++        norm_entropies = []
++        fixed_fractions = []
++        for s, suf in zip(str_ids, suffixes):
++            if not suf:
++                suffix_entropies.append(0.0)
++                norm_entropies.append(0.0)
++            else:
++                suffix_entropies.append(entropy_fn(suf))
++                norm_entropies.append(MathCore.normalized_entropy(suf))
++            fixed_fractions.append(plen / len(s) if len(s) > 0 else 0.0)
++
++        avg_suf_ent = sum(suffix_entropies) / len(suffix_entropies)
++        avg_norm = sum(norm_entropies) / len(norm_entropies)
++        avg_fixed = sum(fixed_fractions) / len(fixed_fractions)
++
++        # Heuristic: non-trivial shared prefix + low entropy on the
++        # varying part.  Thresholds are conservative; the rule layer
++        # can still apply its own cut-offs on the raw metrics.
++        is_templated = (
++            plen >= min_prefix_len
++            and avg_suf_ent < 3.0
++            and avg_fixed >= 0.3
++        )
++
++        return {
++            "common_prefix": prefix,
++            "prefix_length": plen,
++            "avg_suffix_entropy_bits": round(avg_suf_ent, 3),
++            "avg_suffix_normalized_entropy": round(avg_norm, 3),
++            "avg_fixed_fraction": round(avg_fixed, 3),
++            "is_templated": is_templated,
++            "suffixes_preview": suffixes[:8],
++        }
+diff --git a/entropica_audit_engine/explain.py b/entropica_audit_engine/explain.py
+index de9de02..aa0567f 100644
+--- a/entropica_audit_engine/explain.py
++++ b/entropica_audit_engine/explain.py
+@@ -126,6 +126,24 @@ def _sequential_clause(metrics: dict) -> Optional[str]:
+ # ----------------------------------------------------------------------
+ # Per-rule explainers
+ # ----------------------------------------------------------------------
++def _templated_clause(metrics: dict) -> Optional[str]:
++    """Structural signal for fixed-prefix + low-entropy-suffix IDs."""
++    if "templated_id" not in metrics.get("triggered_by", []) and not metrics.get("is_templated"):
++        return None
++    prefix = metrics.get("common_prefix") or ""
++    suf_ent = metrics.get("avg_suffix_entropy_bits")
++    fixed = metrics.get("avg_fixed_fraction")
++    if not prefix or suf_ent is None:
++        return None
++    fixed_pct = f", ~{fixed * 100:.0f}% of each ID is the fixed prefix" if fixed is not None else ""
++    return (
++        f"IDs share a common prefix `{prefix}` (length {len(prefix)}) with low "
++        f"entropy on the varying suffix (\u2248 {suf_ent} bits){fixed_pct}. "
++        "This is a templated / structurally predictable pattern that whole-string "
++        "entropy alone can miss."
++    )
++
++
+ def _explain_bola(finding: Finding, rate_rps: float) -> str:
+     m = finding.metrics
+     parts = []
+@@ -138,6 +156,9 @@ def _explain_bola(finding: Finding, rate_rps: float) -> str:
+         clause = _entropy_clause(m)
+         if clause:
+             parts.append(clause)
++        tmpl_clause = _templated_clause(m)
++        if tmpl_clause:
++            parts.append(tmpl_clause)
+ 
+     seq_clause = _sequential_clause(m)
+     if seq_clause:
+diff --git a/entropica_audit_engine/rules/bola.py b/entropica_audit_engine/rules/bola.py
+index d12d8c4..5044c94 100644
+--- a/entropica_audit_engine/rules/bola.py
++++ b/entropica_audit_engine/rules/bola.py
+@@ -117,7 +117,7 @@ class PredictableResourceIDRule(BaseAuditRule):
+                 triggered_by.append("small_keyspace")
+             triggered = highly_sequential or small_keyspace
+         else:
+-            # --- Non-numeric / mixed-alphabet ID scheme: entropy signal ---
++            # --- Non-numeric / mixed-alphabet ID scheme: entropy + structural ---
+             # Miller-Madow by default: the plugin estimator is negatively
+             # biased on small samples (see MathCore.miller_madow_entropy),
+             # which is exactly the n=5-50 regime a live probe operates in.
+@@ -137,7 +137,25 @@ class PredictableResourceIDRule(BaseAuditRule):
+             metrics["estimator"] = "miller_madow" if self.use_miller_madow else "plugin"
+             if low_entropy:
+                 triggered_by.append("low_entropy")
+-            triggered = highly_sequential or low_entropy
++
++            # Structural / templated-ID signal (closes the blind spot where
++            # a fixed predictable prefix + small varying suffix scores high
++            # on whole-string entropy).  See MathCore.templated_id_metrics.
++            tmpl = MathCore.templated_id_metrics(
++                sample_ids, use_miller_madow=self.use_miller_madow
++            )
++            metrics["common_prefix"] = tmpl["common_prefix"]
++            metrics["prefix_length"] = tmpl["prefix_length"]
++            metrics["avg_suffix_entropy_bits"] = tmpl["avg_suffix_entropy_bits"]
++            metrics["avg_suffix_normalized_entropy"] = tmpl["avg_suffix_normalized_entropy"]
++            metrics["avg_fixed_fraction"] = tmpl["avg_fixed_fraction"]
++            metrics["is_templated"] = tmpl["is_templated"]
++            if tmpl.get("suffixes_preview"):
++                metrics["suffixes_preview"] = tmpl["suffixes_preview"]
++            if tmpl["is_templated"]:
++                triggered_by.append("templated_id")
++
++            triggered = highly_sequential or low_entropy or tmpl["is_templated"]
+ 
+         if not triggered:
+             return None
+diff --git a/entropica_audit_engine/tests/test_bola.py b/entropica_audit_engine/tests/test_bola.py
+index d5d9d76..7847e0d 100644
+--- a/entropica_audit_engine/tests/test_bola.py
++++ b/entropica_audit_engine/tests/test_bola.py
+@@ -123,3 +123,37 @@ class TestEstimatorChoice:
+         ci = finding.metrics["keyspace_bits_ci_95"]
+         assert ci["lower"] <= ci["point"] <= ci["upper"]
+         assert ci["point"] == finding.metrics["estimated_keyspace_bits"]
++
++
++class TestTemplatedIdSignal:
++    """BOLA must now flag fixed-prefix + low-suffix-entropy patterns that
++    whole-string entropy alone previously missed."""
++
++    def test_book_title_pattern_triggers_templated(self):
++        import asyncio
++        from entropica_audit_engine.rules.bola import PredictableResourceIDRule
++
++        rule = PredictableResourceIDRule(entropy_threshold=3.0)
++        ids = ["bookTitle7", "bookTitle38", "bookTitle17", "bookTitle42"]
++        finding = asyncio.run(rule.execute("https://api.example.com/books/{id}", sample_ids=ids))
++        assert finding is not None
++        assert "templated_id" in finding.metrics["triggered_by"]
++        assert finding.metrics["common_prefix"] == "bookTitle"
++        assert finding.metrics["avg_suffix_entropy_bits"] < 3.0
++
++    def test_high_entropy_tokens_do_not_trigger_templated(self):
++        import asyncio
++        from entropica_audit_engine.rules.bola import PredictableResourceIDRule
++
++        rule = PredictableResourceIDRule()
++        ids = [
++            "a1b2c3d4e5f67890",
++            "f9e8d7c6b5a43210",
++            "1122334455667788",
++            "9988776655443322",
++        ]
++        finding = asyncio.run(rule.execute("https://api.example.com/tokens/{id}", sample_ids=ids))
++        # May or may not trigger on whole-string entropy depending on threshold,
++        # but must not claim the templated_id structural signal.
++        if finding is not None:
++            assert "templated_id" not in finding.metrics.get("triggered_by", [])
+diff --git a/entropica_audit_engine/tests/test_math_core.py b/entropica_audit_engine/tests/test_math_core.py
+index 8c71de4..4696a13 100644
+--- a/entropica_audit_engine/tests/test_math_core.py
++++ b/entropica_audit_engine/tests/test_math_core.py
+@@ -228,3 +228,49 @@ class TestAcceleration:
+         acc.update(0, 5)
+         acc.update(1, 50)
+         assert not acc.is_brute_force(accel_threshold=15, sustained=3)
++
++
++class TestTemplatedIdMetrics:
++    """Structural signal that closes the whole-string-entropy blind spot
++    for fixed-prefix + small varying suffix patterns (e.g. bookTitle7)."""
++
++    def test_book_title_style_is_templated(self):
++        ids = ["bookTitle7", "bookTitle38", "bookTitle17"]
++        m = MathCore.templated_id_metrics(ids)
++        assert m["common_prefix"] == "bookTitle"
++        assert m["prefix_length"] == 9
++        assert m["avg_suffix_entropy_bits"] is not None
++        assert m["avg_suffix_entropy_bits"] < 2.5  # short numeric suffixes
++        assert m["avg_fixed_fraction"] > 0.7
++        assert m["is_templated"] is True
++
++    def test_uuid_not_templated(self):
++        ids = [
++            "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
++            "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
++            "11223344-5566-7788-99aa-bbccddeeff00",
++        ]
++        m = MathCore.templated_id_metrics(ids)
++        assert m["is_templated"] is False
++        # May share a short prefix by chance, but suffix entropy stays high
++        assert m["avg_suffix_entropy_bits"] is None or m["avg_suffix_entropy_bits"] > 3.0 or m["prefix_length"] < 3
++
++    def test_identical_strings(self):
++        ids = ["same", "same", "same"]
++        m = MathCore.templated_id_metrics(ids)
++        assert m["common_prefix"] == "same"
++        assert m["avg_suffix_entropy_bits"] == 0.0
++        assert m["is_templated"] is True
++
++    def test_no_common_prefix(self):
++        ids = ["alpha", "beta", "gamma"]
++        m = MathCore.templated_id_metrics(ids)
++        assert m["common_prefix"] == ""
++        assert m["prefix_length"] == 0
++        assert m["is_templated"] is False
++
++    def test_longest_common_prefix_helper(self):
++        assert MathCore.longest_common_prefix(["bookTitle7", "bookTitle38"]) == "bookTitle"
++        assert MathCore.longest_common_prefix(["abc", "abd", "abe"]) == "ab"
++        assert MathCore.longest_common_prefix(["x", "y"]) == ""
++        assert MathCore.longest_common_prefix([]) == ""
