@@ -313,3 +313,77 @@ class MathCore:
         lower = max(0.0, point - half)
         upper = point + half
         return (point, lower, upper)
+
+    # ------------------------------------------------------------------
+    # 5. Structural / templated-ID signal (prefix + varying suffix)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def longest_common_prefix(strings: Sequence[str]) -> str:
+        """
+        Longest common prefix of a sequence of strings.
+
+        Returns the empty string if the sequence is empty or the strings
+        share no common prefix.  Used as the structural signal that pure
+        per-character entropy misses: a fixed, predictable prefix (e.g.
+        "bookTitle") followed by a small varying suffix is highly
+        guessable even when whole-string entropy looks healthy.
+        """
+        if not strings:
+            return ""
+        strs = [str(s) for s in strings if str(s)]
+        if not strs:
+            return ""
+        prefix = strs[0]
+        for s in strs[1:]:
+            while not s.startswith(prefix) and prefix:
+                prefix = prefix[:-1]
+            if not prefix:
+                break
+        return prefix
+
+    @staticmethod
+    def decompose_template(ids: Sequence[Union[str, int]]) -> dict:
+        """
+        Pure structural decomposition: splits the sample into its shared
+        longest-common-prefix and each ID's varying remainder. No security
+        judgment is made here — the same split MathCore keeps everywhere
+        else (estimated_keyspace_bits and sequential_score both return
+        bare numbers; the rule decides what counts as "too predictable").
+
+        `suffixes_numeric` is the varying remainders parsed as integers
+        (via parse_numeric_ids), or None if any remainder isn't purely
+        numeric (or any is empty). That's the signal a rule uses to pick
+        the right tool for the remainder: keyspace_bits_ci — the same
+        order-statistics estimator already used for plain numeric IDs —
+        measures true cardinality and gives a confidence interval,
+        neither of which a short suffix's character entropy actually
+        provides (character entropy only correlates with true keyspace
+        size for numeric strings by structural coincidence — both scale
+        with digit-string length — not because it measures the same
+        thing). Entropy-on-the-remainder-only remains the right tool
+        when the remainder isn't numeric.
+        """
+        str_ids = [str(s) for s in ids]
+        if len(str_ids) < 2:
+            return {
+                "common_prefix": "",
+                "prefix_length": 0,
+                "avg_fixed_fraction": 0.0,
+                "suffixes": [],
+                "suffixes_numeric": None,
+            }
+
+        prefix = MathCore.longest_common_prefix(str_ids)
+        plen = len(prefix)
+        suffixes = [s[plen:] for s in str_ids]
+        fixed_fractions = [plen / len(s) if len(s) > 0 else 0.0 for s in str_ids]
+        avg_fixed = sum(fixed_fractions) / len(fixed_fractions)
+        suffixes_numeric = MathCore.parse_numeric_ids(suffixes) if all(suffixes) else None
+
+        return {
+            "common_prefix": prefix,
+            "prefix_length": plen,
+            "avg_fixed_fraction": round(avg_fixed, 3),
+            "suffixes": suffixes,
+            "suffixes_numeric": suffixes_numeric,
+        }

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, List, Optional, Sequence
 
 from entropica_audit_engine.core.math_core import MathCore
+from entropica_audit_engine.core.templated_id import measure_templated_id, templated_id_triggered
 from .base import BaseAuditRule, Finding, Severity
 
 
@@ -44,6 +45,8 @@ class PredictableResourceIDRule(BaseAuditRule):
         sequential_threshold: float = 0.7,
         keyspace_bit_threshold: float = 32.0,
         use_miller_madow: bool = True,
+        min_prefix_len: int = 3,
+        min_fixed_fraction: float = 0.3,
     ) -> None:
         super().__init__(
             rule_id="API1:2023",
@@ -68,6 +71,12 @@ class PredictableResourceIDRule(BaseAuditRule):
         # this threshold is tunable per the sensitivity of the resource.
         self.keyspace_bit_threshold = keyspace_bit_threshold
         self.use_miller_madow = use_miller_madow
+        # Gates for the templated-ID structural signal below. Both are
+        # judgment calls (how long a prefix counts as "real", how much
+        # of the string it needs to occupy) — kept here on the rule, not
+        # inside MathCore.decompose_template, which only measures.
+        self.min_prefix_len = min_prefix_len
+        self.min_fixed_fraction = min_fixed_fraction
 
     async def execute(self, target_url: str, **kwargs: Any) -> Optional[Finding]:
         """
@@ -117,7 +126,7 @@ class PredictableResourceIDRule(BaseAuditRule):
                 triggered_by.append("small_keyspace")
             triggered = highly_sequential or small_keyspace
         else:
-            # --- Non-numeric / mixed-alphabet ID scheme: entropy signal ---
+            # --- Non-numeric / mixed-alphabet ID scheme: entropy + structural ---
             # Miller-Madow by default: the plugin estimator is negatively
             # biased on small samples (see MathCore.miller_madow_entropy),
             # which is exactly the n=5-50 regime a live probe operates in.
@@ -137,7 +146,43 @@ class PredictableResourceIDRule(BaseAuditRule):
             metrics["estimator"] = "miller_madow" if self.use_miller_madow else "plugin"
             if low_entropy:
                 triggered_by.append("low_entropy")
-            triggered = highly_sequential or low_entropy
+
+            # Structural / templated-ID signal (real-data finding: a fixed
+            # predictable prefix, e.g. "bookTitle", inflates whole-string
+            # entropy even when the *varying* part is tiny and guessable).
+            # Shared with the calibration harness (core/templated_id.py)
+            # so the two can't silently disagree about what counts as
+            # templated - the measurement logic is genuinely easy to get
+            # subtly wrong, and having it in exactly one place means a
+            # fix here is a fix everywhere it's used.
+            measured = measure_templated_id(
+                sample_ids,
+                min_prefix_len=self.min_prefix_len,
+                min_fixed_fraction=self.min_fixed_fraction,
+                use_miller_madow=self.use_miller_madow,
+            )
+            templated = templated_id_triggered(
+                measured,
+                entropy_threshold=self.entropy_threshold,
+                sequential_threshold=self.sequential_threshold,
+                keyspace_bit_threshold=self.keyspace_bit_threshold,
+            )
+            if measured["has_template"]:
+                metrics["common_prefix"] = measured["common_prefix"]
+                metrics["prefix_length"] = measured["prefix_length"]
+                metrics["avg_fixed_fraction"] = measured["avg_fixed_fraction"]
+                metrics["suffix_kind"] = measured["suffix_kind"]
+                if measured["suffix_kind"] == "numeric":
+                    metrics["suffix_keyspace_bits"] = measured["suffix_keyspace_bits"]
+                    metrics["suffix_keyspace_bits_ci_95"] = measured["suffix_keyspace_bits_ci_95"]
+                    metrics["suffix_sequential_score"] = measured["suffix_sequential_score"]
+                else:
+                    metrics["suffix_entropy_bits"] = measured["suffix_entropy_bits"]
+                if templated:
+                    triggered_by.append("templated_id")
+            metrics["is_templated"] = templated
+
+            triggered = highly_sequential or low_entropy or templated
 
         if not triggered:
             return None

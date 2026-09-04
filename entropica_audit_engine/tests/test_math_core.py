@@ -228,3 +228,62 @@ class TestAcceleration:
         acc.update(0, 5)
         acc.update(1, 50)
         assert not acc.is_brute_force(accel_threshold=15, sustained=3)
+
+
+class TestDecomposeTemplate:
+    """
+    Pure structural decomposition — no threshold judgment here (that
+    moved to the rule, see TestTemplatedIdSignal in test_bola.py for the
+    is_templated behavior). These tests check the measurement is right:
+    correct prefix, correct suffixes, and correct numeric-vs-not routing
+    signal (suffixes_numeric), since that routing decision is what
+    determines whether a rule uses keyspace_bits_ci or entropy on the
+    remainder.
+    """
+
+    def test_book_title_style_prefix_and_numeric_suffixes(self):
+        ids = ["bookTitle7", "bookTitle38", "bookTitle17"]
+        d = MathCore.decompose_template(ids)
+        assert d["common_prefix"] == "bookTitle"
+        assert d["prefix_length"] == 9
+        assert d["suffixes"] == ["7", "38", "17"]
+        assert d["suffixes_numeric"] == [7, 38, 17]
+        assert d["avg_fixed_fraction"] > 0.7
+
+    def test_uuid_no_meaningful_prefix(self):
+        ids = [
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
+            "11223344-5566-7788-99aa-bbccddeeff00",
+        ]
+        d = MathCore.decompose_template(ids)
+        # These share no meaningful structural prefix - whatever prefix_length
+        # comes back should be small, not a real template.
+        assert d["prefix_length"] < 3
+
+    def test_identical_strings_whole_prefix_empty_suffix(self):
+        ids = ["same", "same", "same"]
+        d = MathCore.decompose_template(ids)
+        assert d["common_prefix"] == "same"
+        assert d["suffixes"] == ["", "", ""]
+        # Empty suffixes aren't numeric - parse_numeric_ids rejects "".
+        assert d["suffixes_numeric"] is None
+
+    def test_no_common_prefix(self):
+        ids = ["alpha", "beta", "gamma"]
+        d = MathCore.decompose_template(ids)
+        assert d["common_prefix"] == ""
+        assert d["prefix_length"] == 0
+
+    def test_non_numeric_varying_suffix(self):
+        ids = ["session-prod", "session-stag", "session-test"]
+        d = MathCore.decompose_template(ids)
+        assert d["common_prefix"] == "session-"
+        assert d["suffixes"] == ["prod", "stag", "test"]
+        assert d["suffixes_numeric"] is None
+
+    def test_longest_common_prefix_helper(self):
+        assert MathCore.longest_common_prefix(["bookTitle7", "bookTitle38"]) == "bookTitle"
+        assert MathCore.longest_common_prefix(["abc", "abd", "abe"]) == "ab"
+        assert MathCore.longest_common_prefix(["x", "y"]) == ""
+        assert MathCore.longest_common_prefix([]) == ""

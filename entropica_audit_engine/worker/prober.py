@@ -35,6 +35,16 @@ import httpx
 
 from entropica_audit_engine.core.queue_dynamics import QueueDynamicsTracker
 from entropica_audit_engine.core.welford import WelfordTracker, EWMAAnomalyTracker
+from entropica_audit_engine.observability.audit_log import (
+    get_audit_logger,
+    log_backoff_cleared,
+    log_backoff_started,
+    log_drain_rate_adapted,
+    log_probe_result,
+    log_probe_sent,
+    log_scan_complete,
+    log_scan_start,
+)
 
 
 @dataclass
@@ -97,37 +107,63 @@ class AsyncProber:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._completed_count = 0
         self._start_time: Optional[float] = None
+        self._audit_logger = get_audit_logger()
 
-    async def _wait_for_capacity(self) -> None:
+    async def _wait_for_capacity(self, url: str) -> None:
         """
         Block briefly while the modelled queue is above the backoff
         threshold. This is the loop that ties the prober's own throughput
         to the same math used elsewhere in this project to *detect*
         overload — the prober refuses to put itself in the state its own
         rules would flag.
+
+        Every entry into and exit from a backoff period is logged (see
+        observability/audit_log.py) — this is the safety-critical event
+        in the whole system: the concrete evidence that self-throttling
+        actually happened, not just a design claim.
         """
+        backoff_start: Optional[float] = None
         while True:
             now = time.monotonic()
             elapsed = max(now - (self._start_time or now), 1e-6)
             current_rate = self._completed_count / elapsed
             q = self._queue_model.update(now, current_rate)
             if q < self.queue_backoff_threshold:
+                if backoff_start is not None:
+                    log_backoff_cleared(
+                        self._audit_logger, url, queue_length=q,
+                        wait_seconds=now - backoff_start,
+                    )
                 return
+            if backoff_start is None:
+                backoff_start = now
+                log_backoff_started(
+                    self._audit_logger, url, queue_length=q,
+                    threshold=self.queue_backoff_threshold,
+                )
             await asyncio.sleep(0.05)
 
     async def probe_one(self, client: httpx.AsyncClient, url: str) -> ProbeResult:
         if self._start_time is None:
             self._start_time = time.monotonic()
 
-        await self._wait_for_capacity()
+        await self._wait_for_capacity(url)
         async with self._semaphore:
+            log_probe_sent(self._audit_logger, url)
             t0 = time.monotonic()
             try:
                 resp = await client.get(url, timeout=self.request_timeout)
                 completion_t = time.monotonic()
                 latency_ms = (completion_t - t0) * 1000.0
                 self._completed_count += 1
+                mu_before = self._queue_model.mu
                 self._queue_model.record_departure(completion_t)
+                if self._queue_model.mu != mu_before:
+                    log_drain_rate_adapted(
+                        self._audit_logger, url, previous_mu=mu_before,
+                        new_mu=self._queue_model.mu,
+                        n_departures_observed=self._queue_model.mu_sample_count,
+                    )
                 z = self._latency_tracker.update(latency_ms)
                 self._anomaly_tracker.update(z)
                 body: Any = None
@@ -135,6 +171,7 @@ class AsyncProber:
                     body = resp.json()
                 except Exception:
                     body = None
+                log_probe_result(self._audit_logger, url, resp.status_code, latency_ms)
                 return ProbeResult(
                     url=url,
                     status_code=resp.status_code,
@@ -145,7 +182,15 @@ class AsyncProber:
                 completion_t = time.monotonic()
                 latency_ms = (completion_t - t0) * 1000.0
                 self._completed_count += 1
+                mu_before = self._queue_model.mu
                 self._queue_model.record_departure(completion_t)
+                if self._queue_model.mu != mu_before:
+                    log_drain_rate_adapted(
+                        self._audit_logger, url, previous_mu=mu_before,
+                        new_mu=self._queue_model.mu,
+                        n_departures_observed=self._queue_model.mu_sample_count,
+                    )
+                log_probe_result(self._audit_logger, url, None, latency_ms, error=str(exc))
                 return ProbeResult(
                     url=url, status_code=None, latency_ms=latency_ms, error=str(exc)
                 )
@@ -160,6 +205,8 @@ class AsyncProber:
         for the excessive-data-exposure rule.
         """
         session = ProbeSession()
+        log_scan_start(self._audit_logger, urls, self.max_concurrency)
+        scan_t0 = time.monotonic()
         async with httpx.AsyncClient(headers=headers) as client:
             tasks = [self.probe_one(client, url) for url in urls]
             results = await asyncio.gather(*tasks)
@@ -176,6 +223,14 @@ class AsyncProber:
                 for key, value in result.body.items():
                     session.field_samples.setdefault(key, []).append(value)
 
+        log_scan_complete(
+            self._audit_logger,
+            target_count=len(urls),
+            duration_seconds=time.monotonic() - scan_t0,
+            anomaly_detected=self.anomaly_detected,
+            final_drain_rate_estimate=self.drain_rate_estimate,
+            drain_rate_is_adapted=self.mu_is_adapted,
+        )
         return session
 
     @property

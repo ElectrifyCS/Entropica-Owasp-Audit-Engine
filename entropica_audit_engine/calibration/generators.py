@@ -177,6 +177,84 @@ def generate_predictable_session_token(n: int, seed: int = 0) -> GeneratorResult
 
 
 # ----------------------------------------------------------------------
+# crAPI-oriented (Priority 4 — second target scaffolding)
+# ----------------------------------------------------------------------
+def generate_crapi_vehicle_id(n: int, seed: int = 0) -> GeneratorResult:
+    """
+    Numeric-ish vehicle / order IDs in the style commonly seen in crAPI
+    demos (small sequential or near-sequential integers).  Labelled
+    vulnerable so the keyspace + sequential signals have a second-target
+    positive class beyond the generic auto_increment generator.
+    """
+    r = _rng(seed)
+    start = r.randint(100, 900)
+    return [start + i for i in range(n)], "vulnerable"
+
+
+def generate_crapi_report_id(n: int, seed: int = 0) -> GeneratorResult:
+    """
+    Short alphanumeric report identifiers sometimes observed in crAPI-
+    style apps.  Low alphabet + short length → entropy signal should fire.
+    """
+    r = _rng(seed)
+    alphabet = string.ascii_lowercase + string.digits
+    # Deliberately short and partially patterned
+    return [f"rpt{r.randint(10, 99)}{r.choice(alphabet)}" for _ in range(n)], "vulnerable"
+
+
+# ----------------------------------------------------------------------
+# Templated-ID structural signal (core/templated_id.py) — a fixed prefix
+# wrapped around a varying suffix. Without these, none of the other nine
+# generators exercise this signal at all, so its sweep would have an
+# empty confusion matrix — a sweep with nothing to sweep against isn't a
+# real calibration pass.
+# ----------------------------------------------------------------------
+def generate_templated_numeric_suffix_small(n: int, seed: int = 0) -> GeneratorResult:
+    """
+    Fixed prefix + small numeric suffix (e.g. "bookTitle7") — the exact
+    real-data pattern that motivated this signal (a live VAmPI capture
+    of book titles, see calibration_output/calibration_report.md).
+    Vulnerable: the suffix's true keyspace is small regardless of how
+    the whole string's character entropy looks.
+    """
+    r = _rng(seed)
+    lo, hi = r.randint(1, 20), r.randint(30, 90)
+    return [f"resourceItem{r.randint(lo, hi)}" for _ in range(n)], "vulnerable"
+
+
+def generate_templated_numeric_suffix_large(n: int, seed: int = 0) -> GeneratorResult:
+    """
+    Fixed prefix + genuinely large numeric suffix (~43 true bits) — the
+    negative control this signal needs: a real template shape whose
+    varying part is NOT actually guessable, so the sweep has something
+    to compute a false-positive rate against, not just a positive class.
+
+    Prefix is deliberately longer than a short "txn-" would be: a large
+    enough numeric suffix to clear the keyspace threshold needs enough
+    digits that a short prefix would fail the fixed-fraction gate
+    (avg_fixed_fraction >= 0.3) before the keyspace signal is even
+    reached — found by actually running this generator through the
+    harness, not assumed.
+    """
+    r = _rng(seed)
+    return [f"transaction-record-{r.randint(0, 2**43):014d}" for _ in range(n)], "safe"
+
+
+def generate_templated_enum_suffix(n: int, seed: int = 0) -> GeneratorResult:
+    """
+    Fixed prefix + a small closed set of non-numeric suffixes (e.g.
+    environment names) — exercises the OTHER branch of the templated
+    signal (suffix entropy, not suffix keyspace), which none of the
+    other vulnerable generators touch. A handful of possible suffixes
+    is genuinely enumerable regardless of how diverse each individual
+    suffix's characters look.
+    """
+    r = _rng(seed)
+    suffixes = ["prod", "stag", "test", "perf", "beta"]
+    return [f"session-{r.choice(suffixes)}" for _ in range(n)], "vulnerable"
+
+
+# ----------------------------------------------------------------------
 # Registry
 # ----------------------------------------------------------------------
 GENERATORS: Dict[str, Callable[..., GeneratorResult]] = {
@@ -189,4 +267,11 @@ GENERATORS: Dict[str, Callable[..., GeneratorResult]] = {
     "hex_token": generate_hex_token,
     "ulid_like": generate_ulid_like,
     "predictable_session_token": generate_predictable_session_token,
+    # Priority 4 — crAPI second-target scaffolding
+    "crapi_vehicle_id": generate_crapi_vehicle_id,
+    "crapi_report_id": generate_crapi_report_id,
+    # Templated-ID structural signal
+    "templated_numeric_suffix_small": generate_templated_numeric_suffix_small,
+    "templated_numeric_suffix_large": generate_templated_numeric_suffix_large,
+    "templated_enum_suffix": generate_templated_enum_suffix,
 }

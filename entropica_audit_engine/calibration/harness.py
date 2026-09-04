@@ -35,11 +35,18 @@ from __future__ import annotations
 
 import json
 import statistics
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from entropica_audit_engine.core.math_core import MathCore
+from entropica_audit_engine.core.templated_id import measure_templated_id, templated_id_triggered
+from entropica_audit_engine.observability.audit_log import (
+    get_audit_logger,
+    log_calibration_complete,
+    log_calibration_start,
+)
 
 from .generators import GENERATORS, GeneratorResult
 
@@ -54,6 +61,23 @@ RULE_DEFAULTS = {
     "entropy_threshold": 3.0,
     "sequential_threshold": 0.7,
     "keyspace_bit_threshold": 32.0,
+}
+
+# Structural gates for the templated-ID signal (core/templated_id.py) —
+# kept as a SEPARATE dict from RULE_DEFAULTS on purpose. RULE_DEFAULTS
+# gets spread wholesale into would_trigger() by sweep() below; these two
+# aren't would_trigger() parameters at all (they're consumed once, at
+# record-creation time, by records_from_samples), so mixing them into
+# RULE_DEFAULTS breaks that spread with an unexpected-keyword error —
+# found by actually running the test suite, not guessed in advance.
+# The deeper reason they can't be swept the way the three thresholds
+# above can: they decide whether a template was detected AT ALL, not
+# whether it's vulnerable, and real captures don't retain raw samples
+# (see records_from_samples' docstring) — there's nothing to re-run a
+# different gate value against after the fact.
+TEMPLATE_GATE_DEFAULTS = {
+    "min_prefix_len": 3,
+    "min_fixed_fraction": 0.3,
 }
 
 
@@ -84,6 +108,22 @@ class CalibrationRecord:
     avg_entropy_plugin: Optional[float] = None
     avg_entropy_mm: Optional[float] = None
     avg_normalized_entropy: Optional[float] = None
+    # Templated-ID structural signal (core/templated_id.py). has_template
+    # is a fixed structural fact computed once at record creation (see
+    # RULE_DEFAULTS' comment on why it can't be swept later the way the
+    # three threshold fields above can). suffix_* fields mirror the
+    # existing numeric/entropy fields above but measured on the varying
+    # suffix only, once a template is detected.
+    has_template: bool = False
+    common_prefix: str = ""
+    prefix_length: int = 0
+    avg_fixed_fraction: float = 0.0
+    suffix_kind: Optional[str] = None  # "numeric" | "non-numeric" | None
+    suffix_keyspace_bits: Optional[float] = None
+    suffix_keyspace_ci_lower: Optional[float] = None
+    suffix_keyspace_ci_upper: Optional[float] = None
+    suffix_sequential_score: Optional[float] = None
+    suffix_entropy_mm: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,6 +166,16 @@ def records_from_samples(
     plugin = [MathCore.shannon_entropy(str(s)) for s in samples]
     mm = [MathCore.miller_madow_entropy(str(s)) for s in samples]
     norm = [MathCore.normalized_entropy(str(s)) for s in samples]
+
+    # Templated-ID structural signal — same shared function bola.py uses
+    # (core/templated_id.py), so a synthetic or real capture gets exactly
+    # the same measurement a live rule run would produce on the same data.
+    measured = measure_templated_id(
+        samples,
+        min_prefix_len=TEMPLATE_GATE_DEFAULTS["min_prefix_len"],
+        min_fixed_fraction=TEMPLATE_GATE_DEFAULTS["min_fixed_fraction"],
+    )
+
     return CalibrationRecord(
         scheme=scheme,
         label=label,
@@ -136,6 +186,22 @@ def records_from_samples(
         avg_entropy_plugin=sum(plugin) / len(plugin),
         avg_entropy_mm=sum(mm) / len(mm),
         avg_normalized_entropy=sum(norm) / len(norm),
+        has_template=measured["has_template"],
+        common_prefix=measured["common_prefix"],
+        prefix_length=measured["prefix_length"],
+        avg_fixed_fraction=measured["avg_fixed_fraction"],
+        suffix_kind=measured["suffix_kind"],
+        suffix_keyspace_bits=measured["suffix_keyspace_bits"],
+        suffix_keyspace_ci_lower=(
+            measured["suffix_keyspace_bits_ci_95"]["lower"]
+            if measured["suffix_keyspace_bits_ci_95"] else None
+        ),
+        suffix_keyspace_ci_upper=(
+            measured["suffix_keyspace_bits_ci_95"]["upper"]
+            if measured["suffix_keyspace_bits_ci_95"] else None
+        ),
+        suffix_sequential_score=measured["suffix_sequential_score"],
+        suffix_entropy_mm=measured["suffix_entropy_bits"],
     )
 
 
@@ -201,6 +267,33 @@ def would_trigger(
         entropy = r.avg_entropy_mm if use_mm else r.avg_entropy_plugin
         if entropy is not None and entropy < entropy_threshold:
             triggered_by.append("low_entropy")
+
+        # Templated-ID structural signal — same shared decision function
+        # rules/bola.py uses (core/templated_id.py), reconstructed from
+        # the record's stored measurement so the sweep can vary these
+        # same three thresholds against it, exactly like every other
+        # signal here, without needing the original raw samples back.
+        measured = {
+            "has_template": r.has_template,
+            "suffix_kind": r.suffix_kind,
+            "suffix_keyspace_bits": r.suffix_keyspace_bits,
+            "suffix_sequential_score": r.suffix_sequential_score,
+            # Only the Miller-Madow variant is stored for the suffix
+            # (measure_templated_id defaults to it, matching this whole
+            # project's general preference for the bias-corrected
+            # estimator); use_mm doesn't toggle a suffix-plugin value the
+            # way it does for whole-string entropy above, since one was
+            # never computed. Worth knowing, not treated as equivalent
+            # to the whole-string field's real dual-estimator support.
+            "suffix_entropy_bits": r.suffix_entropy_mm,
+        }
+        if templated_id_triggered(
+            measured,
+            entropy_threshold=entropy_threshold,
+            sequential_threshold=sequential_threshold,
+            keyspace_bit_threshold=keyspace_bit_threshold,
+        ):
+            triggered_by.append("templated_id")
 
     return (len(triggered_by) > 0, triggered_by)
 
@@ -344,6 +437,18 @@ def scheme_summary(records: Sequence[CalibrationRecord]) -> List[dict]:
         if id_type == "numeric":
             vals = [r.estimated_keyspace_bits for r in recs if r.estimated_keyspace_bits is not None]
             metric_name = "keyspace_bits"
+        elif recs[0].has_template and recs[0].suffix_kind == "numeric":
+            # The decisive number for a templated numeric-suffix scheme
+            # is the SUFFIX's keyspace, not whole-string entropy - showing
+            # whole-string entropy here would repeat the exact misleading
+            # number this signal exists to move past (a low-keyspace
+            # templated ID can show healthy whole-string entropy while
+            # still being trivially enumerable via its suffix).
+            vals = [r.suffix_keyspace_bits for r in recs if r.suffix_keyspace_bits is not None]
+            metric_name = "suffix_keyspace_bits (templated)"
+        elif recs[0].has_template and recs[0].suffix_kind == "non-numeric":
+            vals = [r.suffix_entropy_mm for r in recs if r.suffix_entropy_mm is not None]
+            metric_name = "suffix_entropy_bits_mm (templated)"
         else:
             vals = [r.avg_entropy_mm for r in recs if r.avg_entropy_mm is not None]
             metric_name = "entropy_bits_mm"
@@ -491,6 +596,10 @@ def run(
     seeds: Sequence[int] = DEFAULT_SEEDS,
 ) -> Tuple[str, str]:
     """Collect, save records + render report. Returns (jsonl_path, md_path)."""
+    logger = get_audit_logger()
+    log_calibration_start(logger, sample_sizes, seeds)
+    t0 = time.monotonic()
+
     records = collect(sample_sizes=sample_sizes, seeds=seeds)
     out = Path(output_dir)
     jsonl_path = str(out / "calibration_records.jsonl")
@@ -498,6 +607,12 @@ def run(
     save_jsonl(records, jsonl_path)
     Path(md_path).parent.mkdir(parents=True, exist_ok=True)
     Path(md_path).write_text(render_markdown(records))
+
+    log_calibration_complete(
+        logger, jsonl_path, md_path,
+        n_records=len(records),
+        duration_seconds=time.monotonic() - t0,
+    )
     return jsonl_path, md_path
 
 

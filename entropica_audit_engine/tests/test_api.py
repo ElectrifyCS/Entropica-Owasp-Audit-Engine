@@ -28,11 +28,13 @@ class TestHealthAndRules:
         assert r.status_code == 200
         assert r.json()["status"] == "ok"
 
-    def test_list_rules_includes_all_four(self, client):
+    def test_list_rules_includes_all_five(self, client):
         r = client.get("/rules")
         assert r.status_code == 200
         rule_ids = {rule["rule_id"] for rule in r.json()}
-        assert rule_ids == {"API1:2023", "API3:2023", "API4:2023", "API6:2023"}
+        assert rule_ids == {
+            "API1:2023", "API3:2023", "API4:2023", "API6:2023", "API7:2023",
+        }
 
 
 class TestBolaEndpoint:

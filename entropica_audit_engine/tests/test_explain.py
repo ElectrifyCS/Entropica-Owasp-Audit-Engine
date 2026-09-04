@@ -156,6 +156,79 @@ class TestExplainGenericFallback:
         assert "something_new" in text
 
 
+class TestEntropyClauseHonesty:
+    """
+    Regression test: _entropy_clause used to unconditionally claim
+    "(below the X-bit threshold)" whenever a threshold value existed in
+    metrics, regardless of whether entropy actually crossed it or
+    contributed to the Finding. Caught by reading real explain() output
+    on a templated-ID Finding, not by inspecting the code.
+    """
+
+    def test_does_not_claim_below_threshold_when_entropy_did_not_trigger(self):
+        from entropica_audit_engine.rules.bola import PredictableResourceIDRule
+
+        rule = PredictableResourceIDRule()
+        # Whole-string entropy on this sample is ABOVE the 3.0 threshold
+        # (the templated-ID signal is what actually fires here) - the
+        # explain text must not claim entropy was "below" anything.
+        ids = ["bookTitle7", "bookTitle38", "bookTitle17", "bookTitle42"]
+        finding = run(rule.execute("https://api.example.com/books/{id}", sample_ids=ids))
+        assert finding is not None
+        assert "low_entropy" not in finding.metrics["triggered_by"]
+        assert finding.metrics["avg_entropy_bits"] > finding.metrics["entropy_threshold"]
+        text = explain(finding)
+        assert "below the" not in text or "threshold)" not in text.split("below the")[1][:20]
+
+    def test_does_claim_below_threshold_when_entropy_did_trigger(self):
+        from entropica_audit_engine.rules.bola import PredictableResourceIDRule
+
+        rule = PredictableResourceIDRule()
+        ids = ["aaaa1", "aaaa2", "aaaa3", "aaaa4", "aaaa5"]
+        finding = run(rule.execute("https://api.example.com/sessions/{id}", sample_ids=ids))
+        assert finding is not None
+        assert "low_entropy" in finding.metrics["triggered_by"]
+        text = explain(finding)
+        assert "below the" in text
+
+
+class TestExplainSSRF:
+    def test_vulnerable_finding_mentions_effect_and_interventional_language(self):
+        from entropica_audit_engine.rules.ssrf import SSRFDifferentialRule
+        from entropica_audit_engine.worker.differential_prober import (
+            collect_differential_observations,
+        )
+        from entropica_audit_engine.tests.fixtures.ssrf_apps import make_vulnerable_app
+        import httpx
+
+        async def _run():
+            transport = httpx.ASGITransport(app=make_vulnerable_app())
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                observations = await collect_differential_observations(
+                    client=client,
+                    url_template="/webhook?target={value}",
+                    conditions={"control": "example.com", "loopback": "127.0.0.1"},
+                    samples_per_condition=10,
+                )
+            rule = SSRFDifferentialRule()
+            return await rule.execute(
+                "http://test/webhook",
+                observations=observations,
+                control_label="control",
+                parameter_name="target",
+            )
+
+        finding = run(_run())
+        assert finding is not None
+        text = explain(finding)
+        assert "target" in text
+        assert "loopback" in text
+        assert "Welch's t" in text
+        assert "interventional" in text
+        strongest = finding.metrics["effects"]["loopback"]
+        assert f"{strongest['delta_ms']:+.1f}ms" in text
+
+
 class TestExplainAll:
     def test_explain_all_keys_by_rule_and_target(self):
         rule = MassAssignmentRule()

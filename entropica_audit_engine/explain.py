@@ -105,7 +105,16 @@ def _entropy_clause(metrics: dict) -> Optional[str]:
     norm = metrics.get("avg_normalized_entropy")
     estimator_txt = "bias-corrected Miller\u2013Madow" if estimator == "miller_madow" else "plugin"
     pct = f", {norm * 100:.0f}% of the maximum for the observed alphabet" if norm is not None else ""
-    thr_txt = f" (below the {threshold}-bit threshold)" if threshold is not None else ""
+    # Only claim "(below the X-bit threshold)" when entropy actually WAS
+    # below it and contributed to the finding - matching the guard
+    # _sequential_clause already applies below. Without this, a Finding
+    # that fired on a different signal entirely (e.g. the templated-ID
+    # structural signal) got an entropy clause asserting something false
+    # about its own number: a bookTitle Finding's entropy (3.826) was
+    # reported as "below the 3.0-bit threshold" despite being above it,
+    # because entropy wasn't what triggered that Finding at all.
+    thr_txt_gate = "low_entropy" in metrics.get("triggered_by", [])
+    thr_txt = f" (below the {threshold}-bit threshold)" if (thr_txt_gate and threshold is not None) else ""
     return (
         f"Average entropy \u2248 {avg_bits} bits per symbol ({estimator_txt} "
         f"estimator){pct}{thr_txt}."
@@ -126,6 +135,43 @@ def _sequential_clause(metrics: dict) -> Optional[str]:
 # ----------------------------------------------------------------------
 # Per-rule explainers
 # ----------------------------------------------------------------------
+def _templated_clause(metrics: dict, rate_rps: float) -> Optional[str]:
+    """Structural signal for fixed-prefix IDs. The varying suffix is
+    explained with whichever tool actually measured it: keyspace (with
+    the same enumeration-time story as a plain numeric ID, via
+    _keyspace_clause) if the suffix is numeric, entropy if it isn't —
+    matching whichever branch bola.py actually took."""
+    if "templated_id" not in metrics.get("triggered_by", []) and not metrics.get("is_templated"):
+        return None
+    prefix = metrics.get("common_prefix") or ""
+    fixed = metrics.get("avg_fixed_fraction")
+    if not prefix:
+        return None
+    fixed_pct = f" (~{fixed * 100:.0f}% of each ID)" if fixed is not None else ""
+    header = (
+        f"IDs share a common prefix `{prefix}`{fixed_pct} — a templated pattern "
+        "that whole-string entropy alone can miss."
+    )
+
+    if metrics.get("suffix_kind") == "numeric":
+        suffix_metrics = {
+            "estimated_keyspace_bits": metrics.get("suffix_keyspace_bits"),
+            "keyspace_bits_ci_95": metrics.get("suffix_keyspace_bits_ci_95"),
+        }
+        clause = _keyspace_clause(suffix_metrics, rate_rps)
+        if clause is None:
+            return header
+        return f"{header} The varying suffix is itself a numeric ID: {clause}"
+
+    suf_ent = metrics.get("suffix_entropy_bits")
+    if suf_ent is None:
+        return header
+    return (
+        f"{header} The varying suffix has low entropy on its own "
+        f"(\u2248 {suf_ent} bits), independent of the prefix."
+    )
+
+
 def _explain_bola(finding: Finding, rate_rps: float) -> str:
     m = finding.metrics
     parts = []
@@ -138,6 +184,9 @@ def _explain_bola(finding: Finding, rate_rps: float) -> str:
         clause = _entropy_clause(m)
         if clause:
             parts.append(clause)
+        tmpl_clause = _templated_clause(m, rate_rps)
+        if tmpl_clause:
+            parts.append(tmpl_clause)
 
     seq_clause = _sequential_clause(m)
     if seq_clause:
@@ -235,6 +284,48 @@ def _explain_mass_assignment(finding: Finding, rate_rps: float) -> str:
     return " ".join(parts) if parts else "Read and write field sets diverge structurally."
 
 
+def _explain_ssrf(finding: Finding, rate_rps: float) -> str:
+    """
+    Unlike the other three handlers, this rule's claim is interventional,
+    not correlational (first-principles notes §1.3) - the text says so
+    explicitly rather than reading like another calibrated-threshold
+    Finding, so a reader can tell which kind of evidence they're looking
+    at without needing outside context.
+    """
+    m = finding.metrics
+    e = finding.evidence
+    param = e.get("parameter_name", "parameter")
+    tested = e.get("conditions_tested", [])
+    significant = e.get("significant_conditions", [])
+    strongest_label = e.get("strongest_condition")
+    effects = m.get("effects", {})
+
+    n_tested = max(len(tested) - 1, 0)  # exclude the control condition itself
+    header = (
+        f"Varying the `{param}` parameter produced a statistically significant "
+        f"change in response behavior for {len(significant)} of {n_tested} tested "
+        f"condition(s): {', '.join(f'`{c}`' for c in significant)}."
+    )
+
+    detail = ""
+    strongest = effects.get(strongest_label) if strongest_label else None
+    if strongest:
+        detail = (
+            f" Strongest effect: `{strongest_label}` shifted latency by "
+            f"{strongest['delta_ms']:+.1f}ms relative to the control "
+            f"(Welch's t={strongest['welch_t']}, p={strongest['p_value_two_sided']:.2e}, "
+            f"n={strongest['n_control']} vs {strongest['n_condition']})."
+        )
+
+    closing = (
+        " This is interventional evidence, not a resemblance heuristic: the "
+        "parameter was varied under control and the outcome changed by more "
+        "than sampling noise explains, consistent with the server making a "
+        "downstream request whose destination this parameter influences."
+    )
+    return header + detail + closing
+
+
 def _explain_generic(finding: Finding, rate_rps: float) -> str:
     """
     Fallback for any rule_id not explicitly handled above. Keeps the
@@ -252,6 +343,7 @@ _EXPLAINERS: Dict[str, Callable[[Finding, float], str]] = {
     "API3:2023": _explain_excessive_data,
     "API4:2023": _explain_resource_consumption,
     "API6:2023": _explain_mass_assignment,
+    "API7:2023": _explain_ssrf,
 }
 
 

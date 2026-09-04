@@ -207,16 +207,22 @@ entropica_audit_engine/
 ├── core/                      # Pure math — zero I/O, fully unit-testable
 │   ├── math_core.py           # Shannon/Miller–Madow entropy, sequential score, keyspace + CI
 │   ├── welford.py             # Online mean/variance/z-score + EWMA sequential anomaly test
-│   └── queue_dynamics.py      # Queue model + acceleration tracker
+│   ├── queue_dynamics.py      # Queue model + acceleration tracker
+│   ├── templated_id.py        # Shared prefix+suffix structural signal (measure + decide, no I/O)
+│   └── causal_probe.py        # Interventional signal: Welch's t-test on streaming Welford trackers
 ├── rules/                     # Strategy-pattern audit rules
 │   ├── base.py                 # Finding schema + Severity enum
-│   ├── bola.py                 # Predictable Resource ID rule (API1)
+│   ├── bola.py                 # Predictable Resource ID rule (API1), incl. templated-ID signal
 │   ├── excessive_data.py       # Excessive Data Exposure rule (API3)
 │   ├── resource_consumption.py # Unrestricted Resource Consumption rule (API4)
 │   ├── mass_assignment.py      # Mass Assignment rule (API6)
+│   ├── ssrf.py                  # Server-Side Request Forgery, differential probing (API7)
 │   └── registry.py             # Simple plugin registry
 ├── worker/                    # Async HTTP probing (self-governed via queue model)
-│   └── prober.py
+│   ├── prober.py                # Main prober — queue-model-throttled, drain-rate adaptive
+│   └── differential_prober.py  # SSRF collector — no self-throttling yet (see status table)
+├── observability/              # Real-time structured audit logging (JSON lines, stdout by default)
+│   └── audit_log.py             # Prober conduct, Findings, calibration runs — see module docstring
 ├── api/                        # FastAPI control plane
 │   ├── app.py                  # Routes
 │   ├── models.py                # Pydantic request/response schemas
@@ -255,7 +261,8 @@ uvicorn entropica_audit_engine.api.app:app --reload
 | Math core (Welford + EWMA)             | Done      |
 | Math core (Queue + Acceleration)       | Done      |
 | Online drain-rate (μ) estimation       | Done      |
-| BOLA rule (API1)                       | Done      |
+| Math core (templated / prefix+suffix structural signal) | Done |
+| BOLA rule (API1) — includes templated-ID signal | Done |
 | Excessive Data Exposure rule (API3)    | Done      |
 | Unrestricted Resource Consumption (API4) | Done    |
 | Mass Assignment rule (API6)            | Done      |
@@ -263,13 +270,19 @@ uvicorn entropica_audit_engine.api.app:app --reload
 | Explainability layer (Finding → rationale) | Done  |
 | Async HTTP probing worker              | Done      |
 | FastAPI control plane                  | Done      |
+| Real-time structured audit logging (prober conduct, Findings, calibration runs) | Done |
+| CausalProbe (interventional signal — Welch's t-test, streaming Welford) | Done |
+| SSRF rule (API7) — differential probing | Done, but the collector (`worker/differential_prober.py`) has NO self-throttling yet — unlike the main prober, it has no queue model to back off on. Logged, not yet governed. |
 | Calibration harness — synthetic pass   | Done      |
-| Calibration — real/realistic traffic (crAPI, VAmPI, staging) | Not started — needs network access this repo's dev environment doesn't have |
+| Capture methodology hygiene (organic vs injected labelling) | Done (scripts/capture_vampi.py) |
+| Known-vuln demonstration scaffolding   | Done (scripts/demo_known_vulns.py) |
+| crAPI second-target generators + capture scaffold | Done |
+| Calibration — live organic traffic + known-vuln end-to-end | Requires Docker / network (scripts ready) |
 | Persistent storage (SQLite)            | Planned   |
 | Distributed workers (Celery)           | Planned   |
 | Auth on the control plane              | Planned   |
 
-The mathematical foundations, the active probing layer, a usable control plane, and an explainability layer are all in place now. The calibration harness runs against synthetic data today; running it against real API traffic (crAPI, VAmPI, or a staging target) and folding those records into the same JSONL format is the one item the project notes call MANDATORY that's still open.
+The mathematical foundations, structural templated-ID signal, probing layer, control plane, and explainability layer are in place. Capture scripts now enforce organic-vs-injected provenance. Known-vuln and crAPI scaffolds are ready for live runs. See `COMMERCIAL_READINESS_CHECKLIST.md` and `scripts/`.
 
 ---
 

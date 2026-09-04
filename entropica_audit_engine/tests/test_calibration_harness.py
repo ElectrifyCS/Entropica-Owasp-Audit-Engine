@@ -11,11 +11,93 @@ from entropica_audit_engine.calibration.harness import (
     decisive_signal_counts,
     load_jsonl,
     records_from_samples,
+    render_markdown,
     save_jsonl,
     scheme_summary,
     sweep,
     would_trigger,
 )
+
+
+class TestTemplatedIdWiring:
+    """
+    The calibration harness's half of the templated-ID signal
+    (core/templated_id.py) — populated by records_from_samples, decided
+    by would_trigger, surfaced correctly (not misleadingly) by
+    scheme_summary.
+    """
+
+    def test_templated_numeric_scheme_populates_suffix_fields(self):
+        samples, label = GENERATORS["templated_numeric_suffix_small"](20, seed=0)
+        r = records_from_samples("templated_numeric_suffix_small", samples, label, seed=0)
+        assert r.has_template is True
+        assert r.suffix_kind == "numeric"
+        assert r.suffix_keyspace_bits is not None
+        assert r.suffix_keyspace_ci_lower is not None
+        assert r.suffix_entropy_mm is None  # not the branch that ran
+
+    def test_templated_enum_scheme_populates_suffix_entropy(self):
+        samples, label = GENERATORS["templated_enum_suffix"](20, seed=0)
+        r = records_from_samples("templated_enum_suffix", samples, label, seed=0)
+        assert r.has_template is True
+        assert r.suffix_kind == "non-numeric"
+        assert r.suffix_entropy_mm is not None
+        assert r.suffix_keyspace_bits is None
+
+    def test_would_trigger_flags_small_templated_keyspace(self):
+        samples, label = GENERATORS["templated_numeric_suffix_small"](20, seed=0)
+        r = records_from_samples("templated_numeric_suffix_small", samples, label, seed=0)
+        triggered, triggered_by = would_trigger(r)
+        assert triggered is True
+        assert "templated_id" in triggered_by
+
+    def test_would_trigger_does_not_flag_large_templated_keyspace(self):
+        samples, label = GENERATORS["templated_numeric_suffix_large"](20, seed=0)
+        r = records_from_samples("templated_numeric_suffix_large", samples, label, seed=0)
+        triggered, triggered_by = would_trigger(r)
+        assert "templated_id" not in triggered_by
+
+    def test_would_trigger_threshold_sweep_changes_verdict(self):
+        # Same stored record, no re-measurement - exactly what a sweep
+        # depends on being possible.
+        samples, label = GENERATORS["templated_numeric_suffix_small"](20, seed=0)
+        r = records_from_samples("templated_numeric_suffix_small", samples, label, seed=0)
+        bits = r.suffix_keyspace_bits
+        _, low = would_trigger(r, keyspace_bit_threshold=bits - 1)
+        _, high = would_trigger(r, keyspace_bit_threshold=bits + 1)
+        assert "templated_id" not in low
+        assert "templated_id" in high
+
+    def test_scheme_summary_shows_suffix_metric_not_whole_string_entropy(self):
+        # Regression test: scheme_summary used to always fall back to
+        # whole-string entropy for any non-numeric id_type, including
+        # templated schemes - showing a healthy-looking number (e.g.
+        # 3.8 bits) that had nothing to do with why the scheme was
+        # actually flagged (a 6-bit suffix keyspace). Found by reading
+        # actual report output, not assumed.
+        records = collect(sample_sizes=(20,), seeds=(0,))
+        rows = {row["scheme"]: row for row in scheme_summary(records)}
+
+        small = rows["templated_numeric_suffix_small"]
+        assert small["metric"] == "suffix_keyspace_bits (templated)"
+        assert small["mean"] < 32.0  # the actual reason it's vulnerable
+
+        large = rows["templated_numeric_suffix_large"]
+        assert large["metric"] == "suffix_keyspace_bits (templated)"
+        assert large["mean"] > 32.0  # the actual reason it's safe
+
+        enum_row = rows["templated_enum_suffix"]
+        assert enum_row["metric"] == "suffix_entropy_bits_mm (templated)"
+
+    def test_full_collect_run_does_not_crash_with_new_generators(self):
+        records = collect(sample_sizes=(5, 20), seeds=(0, 1))
+        schemes = {r.scheme for r in records}
+        assert "templated_numeric_suffix_small" in schemes
+        assert "templated_numeric_suffix_large" in schemes
+        assert "templated_enum_suffix" in schemes
+        # And the report renders without raising.
+        text = render_markdown(records)
+        assert "templated_numeric_suffix_small" in text
 
 
 class TestRecordsFromSamples:
@@ -132,7 +214,9 @@ class TestDecisiveSignalCounts:
         records = collect(sample_sizes=(20,), seeds=(0,))
         counts = decisive_signal_counts(records)
         assert sum(counts.values()) > 0
-        assert set(counts.keys()) <= {"highly_sequential", "small_keyspace", "low_entropy"}
+        assert set(counts.keys()) <= {
+            "highly_sequential", "small_keyspace", "low_entropy", "templated_id",
+        }
 
 
 class TestSchemeSummary:

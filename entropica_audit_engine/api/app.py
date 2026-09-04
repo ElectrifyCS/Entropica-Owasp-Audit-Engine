@@ -19,6 +19,8 @@ from fastapi import FastAPI, HTTPException
 from entropica_audit_engine.rules.registry import build_default_registry
 from entropica_audit_engine.rules.base import Finding
 from entropica_audit_engine.worker.prober import AsyncProber
+from entropica_audit_engine.explain import explain
+from entropica_audit_engine.observability.audit_log import get_audit_logger, log_finding
 
 from .models import (
     BolaEvalRequest,
@@ -39,6 +41,19 @@ app = FastAPI(
 )
 
 registry = build_default_registry()
+_audit_logger = get_audit_logger()
+
+
+def _record_finding(finding: Finding) -> None:
+    """
+    Every Finding this control plane produces, wherever it's produced,
+    passes through here - one call site instead of one log_finding call
+    duplicated at every endpoint, so a new endpoint can't silently ship
+    without this. Logs with the same explain() text a human-facing
+    report would show, not a second hand-written description.
+    """
+    store.add(finding)
+    log_finding(_audit_logger, finding, explanation=explain(finding))
 
 
 def _to_finding_out(finding: Finding) -> FindingOut:
@@ -64,7 +79,7 @@ async def evaluate_bola(req: BolaEvalRequest):
     rule = registry.get("API1:2023")
     finding = await rule.execute(req.target_url, sample_ids=req.sample_ids)
     if finding:
-        store.add(finding)
+        _record_finding(finding)
         return _to_finding_out(finding)
     return None
 
@@ -74,7 +89,7 @@ async def evaluate_excessive_data(req: ExcessiveDataEvalRequest):
     rule = registry.get("API3:2023")
     finding = await rule.execute(req.target_url, field_samples=req.field_samples)
     if finding:
-        store.add(finding)
+        _record_finding(finding)
         return _to_finding_out(finding)
     return None
 
@@ -84,7 +99,7 @@ async def evaluate_resource_consumption(req: ResourceConsumptionEvalRequest):
     rule = registry.get("API4:2023")
     finding = await rule.execute(req.target_url, rate_samples=req.rate_samples)
     if finding:
-        store.add(finding)
+        _record_finding(finding)
         return _to_finding_out(finding)
     return None
 
@@ -96,7 +111,7 @@ async def evaluate_mass_assignment(req: MassAssignmentEvalRequest):
         req.target_url, read_fields=req.read_fields, write_fields=req.write_fields
     )
     if finding:
-        store.add(finding)
+        _record_finding(finding)
         return _to_finding_out(finding)
     return None
 
@@ -129,7 +144,8 @@ async def run_scan(req: ScanRequest) -> ScanResult:
         if ed_finding:
             findings.append(ed_finding)
 
-    store.add_many(findings)
+    for f in findings:
+        _record_finding(f)
 
     return ScanResult(
         target_urls=list(req.urls),
