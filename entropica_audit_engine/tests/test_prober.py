@@ -99,6 +99,44 @@ class TestProbeMany:
         assert all(latency >= 0 for latency in session.latencies_ms)
 
 
+class TestSelfThrottlingAgainstRealOverload:
+    """
+    End-to-end regression test for the arrival-rate fix: a real burst of
+    concurrent requests against a genuinely serializing backend (not a
+    hand-constructed tracker scenario) must produce actual queue growth,
+    backoff events, and correct mu adaptation - this is the exact
+    scenario that, before the fix, showed zero queue growth against a
+    real running VAmPI container despite requests taking up to several
+    seconds each.
+    """
+
+    def test_burst_against_serializing_backend_triggers_real_backoff(self):
+        import httpx
+        from entropica_audit_engine.tests.fixtures.overload_apps import make_serializing_app
+
+        transport = httpx.ASGITransport(app=make_serializing_app(hold_seconds=0.3))
+        prober = AsyncProber(max_concurrency=10, initial_drain_rate=40.0, queue_backoff_threshold=2.0)
+
+        async def _run():
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                tasks = [prober.probe_one(client, "/slow") for _ in range(10)]
+                return await asyncio.gather(*tasks)
+
+        results = run(_run())
+
+        # Before the fix: queue_snapshot was exactly 0.0 and mu never
+        # adapted, no matter how overloaded the target actually was.
+        assert prober.queue_snapshot > 0.0
+        assert prober.mu_is_adapted is True
+        # The target's true capacity is ~1/0.3 = 3.33 req/s - confirm the
+        # adapted estimate is in a sane range around that, not just
+        # "some nonzero number."
+        assert 1.0 < prober.drain_rate_estimate < 10.0
+        # Latencies should show the escalating pattern of genuine
+        # serialization - later requests wait behind earlier ones.
+        assert results[-1].latency_ms > results[0].latency_ms * 2
+
+
 class TestDrainRateAdaptation:
     """
     Confirms probe_one actually feeds real completions into

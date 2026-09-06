@@ -39,6 +39,7 @@ class QueueDynamicsTracker:
         drain_rate: float = 10.0,
         mu_learning_rate: float = 0.2,
         min_departures_before_adapting: int = 5,
+        arrival_window_seconds: float = 2.0,
     ) -> None:
         """
         drain_rate (μ): starting estimate of requests the backend can
@@ -55,6 +56,12 @@ class QueueDynamicsTracker:
             samples required before the EWMA is trusted over the initial
             guess. Guards against a single lucky/unlucky gap swinging μ
             (and therefore Q) around on almost no evidence.
+        arrival_window_seconds : trailing window `current_arrival_rate`
+            averages over. Short enough that a real burst is visible
+            almost immediately; long enough to smooth out gaps between
+            individual request-send timestamps. See record_arrival's
+            docstring for why this exists at all — it replaces a proxy
+            that was structurally incapable of detecting overload.
         """
         self.mu = drain_rate
         self._initial_mu = drain_rate
@@ -68,6 +75,10 @@ class QueueDynamicsTracker:
         self._last_departure_t: Optional[float] = None
         self._mu_ewma: Optional[float] = None
         self.mu_sample_count: int = 0
+
+        # --- arrival-rate tracking state ---
+        self.arrival_window_seconds = arrival_window_seconds
+        self._arrival_times: Deque[float] = deque()
 
     def update(self, t: float, lambda_rate: float) -> float:
         """
@@ -93,6 +104,67 @@ class QueueDynamicsTracker:
         snap = QueueSnapshot(t=t, queue_length=self.Q, arrival_rate=lambda_rate, drain_rate=self.mu)
         self.history.append(snap)
         return self.Q
+
+    def record_arrival(self, t: float) -> None:
+        """
+        Record an attempted request dispatch ("arrival") at time t — the
+        moment a caller WANTS to send a request to the target, regardless
+        of whether admission control (queue_backoff_threshold) then
+        delays actually sending it.
+
+        This exists to fix a real, structural bug: the original prober
+        estimated λ(t) as `requests_completed_so_far / elapsed_time` -
+        i.e. observed throughput. That quantity is the DEPARTURE rate,
+        not the arrival rate, and a departure rate can never exceed the
+        target's true drain rate BY CONSTRUCTION (the target itself
+        produced it) - so comparing it against an assumed μ can only
+        ever reveal that the initial guess of μ was wrong, never that
+        arrivals are actually outpacing departures. That's exactly the
+        condition this whole model exists to detect, and the old proxy
+        was structurally incapable of seeing it.
+
+        Confirmed empirically, not just reasoned about: a target that
+        serializes requests so the 10th of 10 concurrent requests takes
+        3 real seconds - an unambiguous overload - produced ZERO
+        measured queue growth under the old throughput-based proxy.
+        """
+        self._arrival_times.append(t)
+
+    def current_arrival_rate(self, now: float) -> float:
+        """
+        Estimated requests/sec attempted, from arrivals within the
+        trailing `arrival_window_seconds` ending at `now`.
+
+        Pruning happens HERE, against the caller-supplied `now`, not
+        only inside record_arrival - a real bug in an earlier version
+        of this method pruned only when a new arrival came in, so a
+        burst's rate estimate never decayed once arrivals stopped:
+        polling this repeatedly during a backoff wait (no new arrivals
+        happening) would keep seeing the same stale, elevated rate
+        forever, making Q grow without bound even after real demand had
+        genuinely stopped. Recomputing the cutoff against `now` on every
+        call makes the estimate decay correctly as real time passes with
+        no new arrivals - exactly the behavior a live rate meter needs.
+
+        A single arrival with no prior baseline is treated as one
+        request per window (not 0) - otherwise the very first requests
+        of a burst would be invisible to the model precisely when they
+        matter most. Multiple arrivals within an effectively-zero span
+        (a true simultaneous burst) are floored to a tiny span rather
+        than producing a division error - correctly reading as a very
+        high rate rather than an undefined one.
+        """
+        cutoff = now - self.arrival_window_seconds
+        while self._arrival_times and self._arrival_times[0] < cutoff:
+            self._arrival_times.popleft()
+
+        n = len(self._arrival_times)
+        if n == 0:
+            return 0.0
+        if n == 1:
+            return 1.0 / self.arrival_window_seconds
+        span = max(now - self._arrival_times[0], 1e-3)
+        return n / span
 
     def is_overloaded(self, threshold: float = 50.0) -> bool:
         """Simple overload signal when queue grows beyond threshold."""
@@ -156,6 +228,7 @@ class QueueDynamicsTracker:
         self._last_departure_t = None
         self._mu_ewma = None
         self.mu_sample_count = 0
+        self._arrival_times.clear()
 
 
 class AccelerationTracker:

@@ -119,12 +119,81 @@ class TestDifferentialProberWiring:
         sent = [e for e in events if e["event"] == "probe_sent"]
         results = [e for e in events if e["event"] == "probe_result"]
         # 2 conditions x 3 samples each = 6 requests - this is the
-        # prober with NO backoff/throttling at all, so every single
-        # request must show up; a gap here would be a silent blind spot
-        # in exactly the prober most in need of visibility.
+        # prober most in need of visibility, and it's no longer a blind
+        # spot: it now delegates to AsyncProber.probe_one for every
+        # request, so this reuses the SAME conduct logging as the main
+        # prober rather than a second, separately-written version of it.
         assert len(sent) == 6
         assert len(results) == 6
         assert all(r["status_code"] == 200 for r in results)
+
+    def test_self_throttling_actually_engages_during_a_differential_probe(self, captured_logger):
+        # The point of this fix, not just "requests still complete":
+        # with a deliberately low backoff threshold, a real backoff
+        # event must fire mid-probe. Before this fix, this prober had
+        # NO queue model at all - this test would have nothing to pass,
+        # because there was no mechanism that could ever produce a
+        # backoff_started event from this code path.
+        from entropica_audit_engine.worker.differential_prober import (
+            collect_differential_observations,
+        )
+        from entropica_audit_engine.worker.prober import AsyncProber
+        from entropica_audit_engine.tests.fixtures.ssrf_apps import make_vulnerable_app
+
+        transport = httpx.ASGITransport(app=make_vulnerable_app())
+        # initial_drain_rate matters here beyond just "make it low enough
+        # to trigger backoff": at 1.0 (the first version of this test),
+        # the model believed the target could handle only 1 req/sec, so
+        # once Q built up it took ~46 REAL seconds of asyncio.sleep(0.05)
+        # to drain back under threshold - a correct but needlessly slow
+        # way to prove the same thing. 50.0 still triggers a real
+        # backoff/clear cycle (the burst of concurrent requests still
+        # exceeds it momentarily) but drains in well under a second.
+        prober = AsyncProber(queue_backoff_threshold=1.0, initial_drain_rate=50.0)
+
+        async def _run():
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await collect_differential_observations(
+                    client=client,
+                    url_template="/webhook?target={value}",
+                    conditions={"control": "example.com", "loopback": "127.0.0.1"},
+                    samples_per_condition=6,
+                    prober=prober,
+                )
+
+        run(_run())
+        events = _events(captured_logger)
+        event_types = [e["event"] for e in events]
+        assert "queue_backoff_started" in event_types
+        assert "queue_backoff_cleared" in event_types
+
+    def test_shared_prober_covers_both_conditions_with_one_queue_model(self, captured_logger):
+        # Confirms the design choice explicitly: one AsyncProber passed
+        # in tracks completions across BOTH conditions, not a fresh
+        # model per condition - the target's real capacity doesn't care
+        # which experimental condition a request belongs to.
+        from entropica_audit_engine.worker.differential_prober import (
+            collect_differential_observations,
+        )
+        from entropica_audit_engine.worker.prober import AsyncProber
+        from entropica_audit_engine.tests.fixtures.ssrf_apps import make_vulnerable_app
+
+        transport = httpx.ASGITransport(app=make_vulnerable_app())
+        prober = AsyncProber()
+
+        async def _run():
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                await collect_differential_observations(
+                    client=client,
+                    url_template="/webhook?target={value}",
+                    conditions={"control": "example.com", "loopback": "127.0.0.1"},
+                    samples_per_condition=4,
+                    prober=prober,
+                )
+
+        run(_run())
+        # 4 + 4 = 8 completions recorded on the ONE shared prober instance.
+        assert prober._completed_count == 8
 
 
 class TestAPIFindingWiring:

@@ -220,7 +220,7 @@ entropica_audit_engine/
 │   └── registry.py             # Simple plugin registry
 ├── worker/                    # Async HTTP probing (self-governed via queue model)
 │   ├── prober.py                # Main prober — queue-model-throttled, drain-rate adaptive
-│   └── differential_prober.py  # SSRF collector — no self-throttling yet (see status table)
+│   └── differential_prober.py  # SSRF collector — throttled via a shared AsyncProber instance
 ├── observability/              # Real-time structured audit logging (JSON lines, stdout by default)
 │   └── audit_log.py             # Prober conduct, Findings, calibration runs — see module docstring
 ├── api/                        # FastAPI control plane
@@ -272,7 +272,8 @@ uvicorn entropica_audit_engine.api.app:app --reload
 | FastAPI control plane                  | Done      |
 | Real-time structured audit logging (prober conduct, Findings, calibration runs) | Done |
 | CausalProbe (interventional signal — Welch's t-test, streaming Welford) | Done |
-| SSRF rule (API7) — differential probing | Done, but the collector (`worker/differential_prober.py`) has NO self-throttling yet — unlike the main prober, it has no queue model to back off on. Logged, not yet governed. |
+| SSRF rule (API7) — differential probing | Done. The collector (`worker/differential_prober.py`) reuses `AsyncProber` directly for every request, so it inherits the same queue model, backoff, and adaptive drain-rate as the main prober — no separate throttling mechanism to keep in sync. |
+| Queue-model arrival-rate estimation | Fixed a real correctness bug: the original self-throttling used `completed_count / elapsed` as a proxy for arrival rate, which is actually the *departure* rate — a quantity that can never exceed the target's true capacity by construction, so it could never detect arrivals outpacing capacity (the exact condition the model exists to catch). Confirmed against a real running VAmPI container: a genuine overload produced zero measured queue growth under the old proxy. Now tracks real request-submission timestamps directly (`QueueDynamicsTracker.record_arrival` / `current_arrival_rate`). |
 | Calibration harness — synthetic pass   | Done      |
 | Capture methodology hygiene (organic vs injected labelling) | Done (scripts/capture_vampi.py) |
 | Known-vuln demonstration scaffolding   | Done (scripts/demo_known_vulns.py) |

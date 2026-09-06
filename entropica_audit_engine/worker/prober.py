@@ -22,6 +22,17 @@ departures count). Until `min_departures_before_adapting` such samples
 have been observed, μ stays at the initial guess — `mu_is_adapted` /
 `drain_rate_estimate` on the tracker expose whether the current value is
 still that guess or has actually been learned.
+
+The arrival side (λ) is tracked symmetrically: every attempted request
+is recorded via `QueueDynamicsTracker.record_arrival` at the moment it's
+first attempted, before any backoff wait — see that method's docstring
+for why an earlier version of this file estimated λ from completion
+throughput instead, and why that was a real, structural bug (throughput
+can never exceed the target's true capacity by construction, so it can
+never actually signal overload). Confirmed against a real target during
+this project's own testing: a burst against a request-serializing
+server produced measurable multi-second queue growth under the fixed
+arrival-rate signal, and zero measured growth under the old one.
 """
 
 from __future__ import annotations
@@ -117,6 +128,12 @@ class AsyncProber:
         overload — the prober refuses to put itself in the state its own
         rules would flag.
 
+        The arrival rate fed into the queue model comes from
+        `QueueDynamicsTracker.current_arrival_rate` — a real count of
+        attempted requests in a trailing window — not from completion
+        throughput. See that property's docstring for why the earlier
+        throughput-based version could never actually detect overload.
+
         Every entry into and exit from a backoff period is logged (see
         observability/audit_log.py) — this is the safety-critical event
         in the whole system: the concrete evidence that self-throttling
@@ -125,8 +142,7 @@ class AsyncProber:
         backoff_start: Optional[float] = None
         while True:
             now = time.monotonic()
-            elapsed = max(now - (self._start_time or now), 1e-6)
-            current_rate = self._completed_count / elapsed
+            current_rate = self._queue_model.current_arrival_rate(now)
             q = self._queue_model.update(now, current_rate)
             if q < self.queue_backoff_threshold:
                 if backoff_start is not None:
@@ -146,6 +162,14 @@ class AsyncProber:
     async def probe_one(self, client: httpx.AsyncClient, url: str) -> ProbeResult:
         if self._start_time is None:
             self._start_time = time.monotonic()
+
+        # Record the arrival at the moment this request is actually
+        # attempted — BEFORE waiting for capacity — so the rate the
+        # queue model sees reflects true demand, not the (rate-limited)
+        # rate at which requests are eventually admitted. Recording it
+        # only after _wait_for_capacity returns would be circular: the
+        # throttle would suppress the very signal it needs to detect.
+        self._queue_model.record_arrival(time.monotonic())
 
         await self._wait_for_capacity(url)
         async with self._semaphore:
